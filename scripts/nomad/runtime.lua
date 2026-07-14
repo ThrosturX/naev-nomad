@@ -24,8 +24,30 @@ function runtime.is_carrier(tagged)
    return tagged == true
 end
 
-function runtime.audit_fleet(ships)
-   return policy.audit(config.carrier, ships)
+function runtime.audit_fleet(ships, bays)
+   return policy.audit({ bays = bays }, ships)
+end
+
+function runtime.general_bays(physical_slots)
+   local sorted = {}
+   for _, slot in pairs(physical_slots or {}) do
+      if config.general_bays[slot.outfit] then
+         sorted[#sorted + 1] = { id = slot.id, outfit = slot.outfit }
+      end
+   end
+   table.sort(sorted, function(left, right) return left.id < right.id end)
+
+   local bays = {}
+   for _, slot in ipairs(sorted) do
+      local source = config.general_bays[slot.outfit]
+      bays[#bays + 1] = {
+         name = source.name,
+         max_size = source.max_size,
+         outfit = source.outfit,
+         slot_id = slot.id,
+      }
+   end
+   return bays
 end
 
 function runtime.audit_command_shuttle(shuttle)

@@ -1,15 +1,21 @@
 local triggered
+local triggers = {}
 local states = {}
 local shared = {
    nomad_bay_tooltips = { [7] = "Assigned: Needle (Hyena)" },
+   nomad_bay_assignments = {
+      [7] = { name = "Needle", hull = "Hyena" },
+   },
 }
 naev = {
    cache = function() return shared end,
    trigger = function(name, payload)
       triggered = { name = name, payload = payload }
+      triggers[#triggers + 1] = triggered
    end,
 }
 _ = function(text) return text end
+player = { outfitNum = function() return 2 end }
 
 local outfit = { nameRaw = function() return "Nomad S Bay" end }
 local pilot_outfit = {
@@ -30,5 +36,19 @@ assert(triggered.name == "nomad_bay_activated"
    "bay activation must emit raw outfit name and physical slot ID")
 assert(states[#states] == "off",
    "a one-shot activation must leave its outfit toggled off")
+
+onremove(nil, pilot_outfit)
+assert(triggers[#triggers - 1].name == "nomad_occupied_bay_removed"
+   and triggers[#triggers - 1].payload.id == 7
+   and triggers[#triggers - 1].payload.ship.name == "Needle"
+   and triggers[#triggers - 1].payload.inventory == 2
+   and triggers[#triggers].name == "nomad_bay_configuration_changed",
+   "removing an assigned control must request restoration and a policy refresh")
+
+shared.nomad_bay_assignments[7] = nil
+triggers = {}
+onremove(nil, pilot_outfit)
+assert(#triggers == 1 and triggers[1].name == "nomad_bay_configuration_changed",
+   "removing an empty control must remain allowed")
 
 print("ok - nomad bay outfit")

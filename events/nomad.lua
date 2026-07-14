@@ -10,15 +10,18 @@
 
 local config = require "nomad.config"
 local crewmates = require "crewmates.api"
-local fmt = require "format"
 local joyride = require "joyride"
-local policy = require "nomad.fleet_policy"
+local parking = require "nomad.parking"
 local runtime = require "nomad.runtime"
 
 local mothership_pilot
-local info_button
+local info_buttons = {}
 local escort_hooks = {}
 local known_owned = {}
+local parking_requested
+local parking_sequence = 0
+local register_actions
+local hooks_installed = false
 
 local function is_carrier(name)
    if name == player.ship() then
@@ -27,44 +30,19 @@ local function is_carrier(name)
    return runtime.is_carrier(player.shipvarPeek(config.carrier_shipvar, name))
 end
 
-local function desired_bay_counts()
-   local counts = {}
-   for _, name in ipairs(config.installed_bays) do
-      counts[name] = (counts[name] or 0) + 1
-   end
-   return counts
-end
-
-local function ensure_bay_outfits()
-   if not is_carrier(player.ship()) then return end
-   local pilot = player.pilot()
-   local desired = desired_bay_counts()
-   local installed = {}
-   for _, outfit in ipairs(pilot:outfitsList()) do
-      local name = outfit:nameRaw()
-      if desired[name] then installed[name] = (installed[name] or 0) + 1 end
-   end
-   for name, wanted in pairs(desired) do
-      local count = installed[name] or 0
-      if count > wanted then
-         pilot:outfitRm(name, count - wanted)
-         count = wanted
-      end
-      for _index = count + 1, wanted do
-         assert(pilot:outfitAdd(name) > 0,
-            "Nomad carrier has no free slot for " .. name)
-      end
-   end
-end
-
 local function physical_bay_slots()
    local slots = {}
-   for id, outfit in ipairs(player.pilot():outfits()) do
+   for id, outfit in pairs(player.pilot():outfits()) do
       if outfit then
          slots[#slots + 1] = { id = id, outfit = outfit:nameRaw() }
       end
    end
    return slots
+end
+
+local function current_bays()
+   if not is_carrier(player.ship()) then return {} end
+   return runtime.general_bays(physical_bay_slots())
 end
 
 local function ship_record(name, ship_type, deployed)
@@ -99,7 +77,8 @@ local function current_command_shuttle()
 end
 
 local function audit_now()
-   local assignments, violations = runtime.audit_fleet(ordinary_owned_ships())
+   local assignments, violations = runtime.audit_fleet(
+      ordinary_owned_ships(), current_bays())
    local command = current_command_shuttle()
    if command then
       local allowed, reason = runtime.audit_command_shuttle(command)
@@ -112,25 +91,22 @@ end
 
 local function refresh_bay_tooltips()
    local descriptions = {}
+   local assignments_by_slot = {}
+   local shared = naev.cache()
    if not is_carrier(player.ship()) then
-      naev.cache().nomad_bay_tooltips = descriptions
+      shared.nomad_bay_tooltips = descriptions
+      shared.nomad_bay_assignments = assignments_by_slot
       return
    end
    local assignments = audit_now()
-   local mapped = runtime.map_bay_slots(config.carrier.bays, physical_bay_slots())
+   local mapped = runtime.map_bay_slots(current_bays(), physical_bay_slots())
    for id, slot in pairs(mapped) do
-      descriptions[id] = runtime.bay_tooltip(
-         runtime.ship_for_bay(assignments, slot.index))
+      local assigned = runtime.ship_for_bay(assignments, slot.index)
+      descriptions[id] = runtime.bay_tooltip(assigned)
+      assignments_by_slot[id] = assigned
    end
-   for _, slot in ipairs(physical_bay_slots()) do
-      if slot.outfit == config.command_bay.outfit then
-         local shuttle = crewmates.get_commander_shuttle(config.joyride_client)
-         descriptions[slot.id] = shuttle
-            and string.format("Assigned: Commander Shuttle (%s)", shuttle:nameRaw())
-            or "Empty"
-      end
-   end
-   naev.cache().nomad_bay_tooltips = descriptions
+   shared.nomad_bay_tooltips = descriptions
+   shared.nomad_bay_assignments = assignments_by_slot
 end
 
 local function apply_nojump(violations)
@@ -155,9 +131,14 @@ end
 
 local function apply_carrier_rules()
    if is_carrier(player.ship()) then
-      player.landAllow(false,
-         _("The carrier cannot land. Launch a carried ship to visit a spaceport."))
-      mem.nomad.carrier_land_block = true
+      if mem.nomad.parked and player.isLanded() then
+         player.landAllow(true)
+         mem.nomad.carrier_land_block = nil
+      else
+         player.landAllow(false,
+            _("The carrier cannot land normally. Use Park Carrier from the info menu."))
+         mem.nomad.carrier_land_block = true
+      end
    elseif mem.nomad.carrier_land_block then
       player.landAllow(true)
       mem.nomad.carrier_land_block = nil
@@ -174,6 +155,7 @@ local function apply_rules(show_message)
          .. _("Hyperspace and mothership docking are disabled. Land locally and sell or trade the incompatible hull."))
    end
    refresh_bay_tooltips()
+   if register_actions then register_actions() end
    return #violations == 0, violations
 end
 
@@ -200,116 +182,17 @@ local function owned_additions(update)
    return additions
 end
 
-local function bay_summary(assignments)
-   local lines = {}
-   for _index, slot in ipairs(policy.usage(config.carrier.bays, assignments)) do
-      lines[#lines + 1] = string.format("%s: %s", slot.bay.name,
-         slot.ship and (slot.ship.name .. " (" .. slot.ship.hull .. ")") or _("empty"))
-   end
-   lines[#lines + 1] = string.format("%s: %s", config.command_bay.name,
-      crewmates.get_commander_shuttle(config.joyride_client):nameRaw())
-   return table.concat(lines, "\n")
-end
-
-function nomad_carrier_menu()
-   local assignments, violations = audit_now()
-   local ships = ordinary_owned_ships()
-   local choices = {}
-   local actions = {}
-   for _index, entry in ipairs(ships) do
-      if entry.name ~= player.ship() then
-         local action = entry.deployed and _("Recall") or _("Launch")
-         choices[#choices + 1] = string.format("%s %s (%s)", action, entry.name, entry.hull)
-         actions[#actions + 1] = entry
-      end
-   end
-   local status = bay_summary(assignments)
-   if #violations > 0 then
-      status = status .. "\n\n#r" .. runtime.violation_message(violations[1]) .. "#0"
-   end
-   if #actions == 0 then
-      tk.msg(_("Nomad Carrier"), status)
-      return
-   end
-   choices[#choices + 1] = _("Close")
-   local choice = tk.choice(_("Nomad Carrier"), status, table.unpack(choices))
-   local selected = actions[choice]
-   if not selected then return end
-   local ok, reason
-   if not mem.nomad.active_sortie then
-      player.shipDeploy(selected.name, not selected.deployed, not selected.deployed)
-      ok = true
-   elseif selected.deployed then
-      ok, reason = joyride.recall_owned(selected.name)
-   else
-      ok, reason = joyride.launch_owned(selected.name)
-   end
-   if not ok then tk.msg(_("Carrier Control"), tostring(reason)) end
-   hook.safe("nomad_refresh_escort_hooks")
-   apply_rules(false)
-end
-
 local function bay_action_message(message)
    if type(player.msg) == "function" then player.msg(message) end
 end
 
 local function launch_command_shuttle()
-   if naev.cache().joyride then
-      return false, _("another auxiliary ship is already active")
-   end
-   if not naev.claimTest(system.cur()) then
-      return false, _("it is unsafe to launch in this system")
-   end
-   local commander, reason = crewmates.get_commander(config.joyride_client)
-   if not commander then return false, reason end
-   if commander.shuttle and commander.shuttle.out then
-      return false, _("the commander shuttle is already deployed")
-   end
-   local shuttle = crewmates.get_commander_shuttle(config.joyride_client)
-   if not shuttle then return false, _("the commander shuttle is unavailable") end
-
-   local carrier = player.pilot()
-   local template = pilot.add(
-      shuttle,
-      commander.faction or "Trader",
-      carrier:pos(),
-      fmt.f(_("{name}'s Shuttle"), { name = player.ship() }),
-      { ai = "dummy" }
-   )
-   template:setVel(carrier:vel())
-   template:setDir(carrier:dir())
-   local launch_profile = profile()
-   launch_profile.name = fmt.f(_("{skill} {title} {name}"), {
-      skill = commander.skill or "",
-      title = commander.typetitle or _("Commander"),
-      name = commander.name or "",
-   })
-   launch_profile.faction = commander.faction
-   launch_profile.ai = "escort_guardian"
-   joyride.swap_to_subship(
-      carrier,
-      template,
-      fmt.f(_("The command bay of your {mothership}."), {
-         mothership = player.ship(),
-      }),
-      launch_profile
-   )
-   return true
+   return crewmates.launch_commander_shuttle(config.joyride_client)
 end
 
 function nomad_bay_activated(payload)
    if not payload or not is_carrier(player.ship()) then return end
-   if payload.outfit == config.command_bay.outfit then
-      local ok, reason = launch_command_shuttle()
-      if ok then
-         bay_action_message(_("Launching the commander's shuttle."))
-      else
-         bay_action_message(string.format(_("Command bay: %s"), tostring(reason)))
-      end
-      return
-   end
-
-   local mapped = runtime.map_bay_slots(config.carrier.bays, physical_bay_slots())
+   local mapped = runtime.map_bay_slots(current_bays(), physical_bay_slots())
    local slot = mapped[payload.id]
    if not slot or slot.bay.outfit ~= payload.outfit then return end
    local assignments = audit_now()
@@ -332,9 +215,58 @@ function nomad_bay_activated(payload)
    hook.safe("nomad_refresh_after_bay_action")
 end
 
+function nomad_launch_command_shuttle()
+   if not is_carrier(player.ship()) or player.isLanded() then return end
+   local ok, reason = launch_command_shuttle()
+   if ok then
+      bay_action_message(_("Launching the commander's shuttle."))
+   else
+      bay_action_message(string.format(_("Command bay: %s"), tostring(reason)))
+   end
+end
+
 function nomad_refresh_after_bay_action()
    nomad_refresh_escort_hooks()
    apply_rules(false)
+end
+
+function nomad_refresh_bay_configuration()
+   apply_rules(false)
+end
+
+function nomad_bay_configuration_changed()
+   hook.safe("nomad_refresh_bay_configuration")
+end
+
+function nomad_restore_occupied_bay(payload)
+   if not payload or not is_carrier(player.ship()) then return end
+   local pilot = player.pilot()
+   local installed = pilot:outfits()[payload.id]
+   if installed then
+      apply_rules(false)
+      return
+   end
+   if not pilot:outfitAddSlot(payload.outfit, payload.id, true, false) then
+      tk.msg(_("Bay In Use"), _("The occupied bay control could not be restored."))
+      apply_rules(false)
+      return
+   end
+   -- The equipment screen returns the removed control to inventory, while a
+   -- direct scripted removal does not. Only balance a copy that appeared
+   -- after onremove recorded the prior inventory count.
+   local inventory_before = tonumber(payload.inventory)
+   if inventory_before and player.outfitNum(payload.outfit) > inventory_before then
+      player.outfitRm(payload.outfit, 1)
+   end
+   local ship = payload.ship or {}
+   tk.msg(_("Bay In Use"), string.format(
+      _("%s cannot be removed while %s (%s) is assigned to it."),
+      payload.outfit, ship.name or _("a ship"), ship.hull or _("unknown hull")))
+   apply_rules(false)
+end
+
+function nomad_occupied_bay_removed(payload)
+   hook.safe("nomad_restore_occupied_bay", payload)
 end
 
 function nomad_refresh_escort_hooks()
@@ -353,12 +285,19 @@ function nomad_refresh_escort_hooks()
 end
 
 function nomad_hail_owned(name)
+   hook.safe("nomad_begin_owned_joyride", name)
+end
+
+function nomad_begin_owned_joyride(name)
+   -- Let Naev finish constructing the hail window before Joyride removes the
+   -- deployed pilot. Invalidating it directly in the pilot hail hook makes the
+   -- comm backend dereference a pilot that no longer exists.
+   player.commClose()
    local entry = find_owned(name)
    if not entry or not entry.deployed then return end
    local ok, reason = joyride.borrow_owned(name, profile())
    if not ok then
       tk.msg(_("Seat Transfer"), tostring(reason))
-      player.commClose()
       return
    end
    mem.nomad.active_kind = "owned"
@@ -366,9 +305,174 @@ function nomad_hail_owned(name)
    hook.safe("nomad_refresh_escort_hooks")
 end
 
-local function register_menu()
-   if info_button then player.infoButtonUnregister(info_button) end
-   info_button = player.infoButtonRegister(_("Nomad Carrier"), nomad_carrier_menu, 2, "N")
+local function next_parking_diff_name()
+   parking_sequence = parking_sequence + 1
+   return string.format("%s %s %d", config.parking.diff,
+      tostring(naev.ticks()), parking_sequence)
+end
+
+local function parked_diff_apply(record)
+   if diff.isApplied(record.diff) then return true end
+   local ok, applied = pcall(diff.newDynamic, parking.diff_xml(record))
+   if not ok then return false, applied end
+   if not applied then
+      return false, _("Naev rejected the temporary parked-carrier location")
+   end
+   return true
+end
+
+local function parked_diff_remove(record)
+   local diff_name = record and record.diff
+   if diff_name and diff.isApplied(diff_name) then
+      diff.remove(diff_name)
+   end
+   -- Clean up prototype saves created before parking diffs had unique names.
+   if diff.isApplied(config.parking.diff) then
+      diff.remove(config.parking.diff)
+   end
+end
+
+local function parking_rollback(reason)
+   local record = mem.nomad.parked
+   mem.nomad.parked = nil
+   parked_diff_remove(record)
+   apply_rules(false)
+   if reason then tk.msg(_("Unable to Park Carrier"), tostring(reason)) end
+end
+
+local function parking_status()
+   local pilot = player.pilot()
+   local _armour, shield = pilot:health()
+   return parking.validate(is_carrier(player.ship()), player.isLanded(), shield)
+end
+
+function nomad_complete_parking()
+   if not parking_requested then return end
+   if tk.isOpen() then
+      hook.timer(0.1, "nomad_complete_parking")
+      return
+   end
+   parking_requested = nil
+
+   local ok, reason = parking_status()
+   if not ok then
+      tk.msg(_("Unable to Park Carrier"), tostring(reason))
+      return
+   end
+
+   local pilot = player.pilot()
+   local position = pilot:pos()
+   local x, y = position:get()
+   local current_system = system.cur()
+   local system_name = current_system:nameRaw()
+   local record = parking.record(
+      system_name, x, y, pilot:dir(), next_parking_diff_name())
+   mem.nomad.parked = record
+   ok, reason = parked_diff_apply(record)
+   if not ok then
+      parking_rollback(reason)
+      return
+   end
+
+   local target = spob.get(config.parking.spob)
+   if not target then
+      parking_rollback(_("the parked-carrier landing target is unavailable"))
+      return
+   end
+   player.landAllow(true)
+   ok, reason = pcall(player.land, target)
+   if not ok then
+      parking_rollback(reason)
+      return
+   end
+end
+
+function nomad_park_carrier()
+   local ok, reason = parking_status()
+   if not ok then
+      tk.msg(_("Unable to Park Carrier"), tostring(reason))
+      return
+   end
+   parking_requested = true
+   if tk.isOpen() then
+      bay_action_message(_("Close the Info window to park the carrier."))
+      hook.timer(0.1, "nomad_complete_parking")
+      return
+   end
+   nomad_complete_parking()
+end
+
+function nomad_landed()
+   -- player.land() completes asynchronously. Never remove the dynamic diff
+   -- until this hook confirms that the player is actually landed; doing so
+   -- leaves Naev holding an unplaced spob during land window construction.
+   if mem.nomad.parked then
+      if not player.isLanded() then return end
+      local current = spob.cur()
+      if not current or current:nameRaw() ~= config.parking.spob then
+         parking_rollback(_("the carrier landed at an unexpected location"))
+         return
+      end
+   end
+   nomad_apply_rules()
+end
+
+function nomad_restore_parked_diff()
+   if mem.nomad.parked then
+      mem.nomad.parked.diff = mem.nomad.parked.diff
+         or next_parking_diff_name()
+   else
+      parked_diff_remove()
+   end
+   hook.safe("nomad_initialize")
+end
+
+local function restore_carrier_after_takeoff(record)
+   parked_diff_remove(record)
+   if not record or not is_carrier(player.ship()) then
+      nomad_apply_rules()
+      return
+   end
+   local current_system = system.cur()
+   if not current_system or current_system:nameRaw() ~= record.system then
+      local ok, reason = pcall(player.teleport, record.system, true, true)
+      if not ok then
+         tk.msg(_("Unable to Restore Carrier Location"), tostring(reason))
+         nomad_apply_rules()
+         return
+      end
+   end
+   local pilot = player.pilot()
+   pilot:setPos(vec2.new(record.x, record.y))
+   pilot:setDir(record.direction)
+   pilot:setVel(vec2.new(0, 0))
+   nomad_apply_rules()
+end
+
+function nomad_takeoff()
+   if mem.nomad.parked then
+      local record = mem.nomad.parked
+      mem.nomad.parked = nil
+      -- Takeoff hooks run after space has been initialized, so removing the
+      -- relocation diff here immediately rebuilds the original system without
+      -- leaving the parked carrier as an AI landing target.
+      restore_carrier_after_takeoff(record)
+      return
+   end
+   nomad_apply_rules()
+end
+
+register_actions = function()
+   for _, button in ipairs(info_buttons) do
+      player.infoButtonUnregister(button)
+   end
+   info_buttons = {}
+   if is_carrier(player.ship()) and not player.isLanded() then
+      info_buttons[#info_buttons + 1] = player.infoButtonRegister(
+         _("Launch Shuttle"), nomad_launch_command_shuttle, 2, "H")
+      info_buttons[#info_buttons + 1] = player.infoButtonRegister(
+         _("Park Carrier"), nomad_park_carrier, 2, "P")
+   end
 end
 
 function nomad_apply_rules()
@@ -445,6 +549,11 @@ function nomad_mothership_restored(payload)
 end
 
 function nomad_hail_mothership()
+   if mem.nomad.active_kind ~= "owned" then
+      bay_action_message(_(
+         "The command shuttle must dock with the carrier to return aboard."))
+      return
+   end
    local fits, violations = apply_rules(false)
    if not fits then
       tk.msg(_("Docking Refused"), runtime.violation_message(violations[1]) .. "\n\n"
@@ -452,7 +561,30 @@ function nomad_hail_mothership()
       player.commClose()
       return
    end
-   joyride.end_joyride()
+   local ok, reason = joyride.end_joyride { redeploy_owned = true }
+   if not ok then
+      bay_action_message(string.format(_("Seat transfer: %s"), tostring(reason)))
+   end
+end
+
+local function register_hooks()
+   if hooks_installed then return end
+   hook.enter("nomad_apply_rules")
+   hook.land("nomad_landed")
+   hook.takeoff("nomad_takeoff")
+   hook.load("nomad_restore_parked_diff")
+   hook.ship_swap("nomad_ship_changed")
+   hook.ship_buy("nomad_ship_acquired")
+   hook.ship_sell("nomad_ship_changed")
+   hook.custom("joyride_mothership_spawned", "nomad_joyride_started")
+   hook.custom("joyride_shuttle_returned", "nomad_shuttle_returned")
+   hook.custom("joyride_mothership_restored", "nomad_mothership_restored")
+   hook.custom("joyride_ended", "nomad_joyride_ended")
+   hook.custom("nomad_bay_activated", "nomad_bay_activated")
+   hook.custom("nomad_bay_configuration_changed",
+      "nomad_bay_configuration_changed")
+   hook.custom("nomad_occupied_bay_removed", "nomad_occupied_bay_removed")
+   hooks_installed = true
 end
 
 function nomad_initialize()
@@ -463,7 +595,10 @@ function nomad_initialize()
       hook.timer(0.1, "nomad_initialize")
       return
    end
-   ensure_bay_outfits()
+   if player.isLanded() and not spob.cur() then
+      hook.timer(0.1, "nomad_initialize")
+      return
+   end
    assert(crewmates.ensure_commander(config.joyride_client, {
       minimum = config.minimum_crew.commander,
       shuttle = config.starter_subship.hull,
@@ -471,25 +606,9 @@ function nomad_initialize()
    }), "Nomad requires an available commander")
    player.fleetCapacitySet(config.fleet_capacity)
    owned_additions(true)
-   register_menu()
+   register_actions()
    apply_rules(false)
    hook.safe("nomad_refresh_escort_hooks")
-
-   if not mem.nomad.hooks_installed then
-      hook.enter("nomad_apply_rules")
-      hook.land("nomad_apply_rules")
-      hook.takeoff("nomad_apply_rules")
-      hook.load("nomad_defer_initialize")
-      hook.ship_swap("nomad_ship_changed")
-      hook.ship_buy("nomad_ship_acquired")
-      hook.ship_sell("nomad_ship_changed")
-      hook.custom("joyride_mothership_spawned", "nomad_joyride_started")
-      hook.custom("joyride_shuttle_returned", "nomad_shuttle_returned")
-      hook.custom("joyride_mothership_restored", "nomad_mothership_restored")
-      hook.custom("joyride_ended", "nomad_joyride_ended")
-      hook.custom("nomad_bay_activated", "nomad_bay_activated")
-      mem.nomad.hooks_installed = true
-   end
 end
 
 function nomad_defer_initialize()
@@ -498,6 +617,9 @@ end
 
 function create()
    mem.nomad = runtime.initialize(mem.nomad)
+   -- Hooks are runtime state. Install them before either dependency is called
+   -- so a transient initialization failure cannot make Naev discard the event.
+   register_hooks()
    assert(runtime.joyride_available(), "Nomad requires the extended Joyride API")
    evt.save(true)
    nomad_defer_initialize()

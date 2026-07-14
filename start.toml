@@ -1,7 +1,7 @@
 scenario_name = "Nomad"
-ship_name = "El Ego de Deiz"
-ship_acquired = "Your carrier and home among the stars."
-ship_model = "Za'lek Hephaestus"
+ship_name = "Nomad Bootstrap"
+ship_acquired = "Temporary hull used while initializing the Nomad carrier."
+ship_model = "Llama"
 credits = 30000
 system = "Delta Polaris"
 system_position = [-12500, -3500]

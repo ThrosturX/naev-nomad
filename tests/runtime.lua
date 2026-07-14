@@ -16,12 +16,26 @@ assert(runtime.joyride_available(), "the extended Joyride API must be detected")
 assert(runtime.is_carrier(true) and not runtime.is_carrier(false),
    "only the stable ship tag identifies the carrier")
 
-local assignments, violations = runtime.audit_fleet {
+local configured_bays = runtime.general_bays {
+   { id = 8, outfit = "Nomad S Bay" },
+   { id = 3, outfit = "Nomad M Bay" },
+   { id = 1, outfit = "Laser Cannon MK1" },
+}
+assert(#configured_bays == 2 and configured_bays[1].name == "M"
+   and configured_bays[1].slot_id == 3 and configured_bays[2].name == "S",
+   "general bays must be derived from installed controls in physical slot order")
+
+local assignments, violations = runtime.audit_fleet({
+   { hull = "Admonisher", size = 4 }, { hull = "Shark", size = 2 },
+}, configured_bays)
+assert(#assignments == 2 and #violations == 0,
+   "runtime auditing must use the currently installed general bays")
+assignments, violations = runtime.audit_fleet({
    { hull = "Goddard", size = 6 }, { hull = "Kestrel", size = 5 },
    { hull = "Shark", size = 2 }, { hull = "Alpaca", size = 1 },
-}
-assert(#assignments == 4 and #violations == 0,
-   "runtime auditing must use the configured fixed general bays")
+}, configured_bays)
+assert(#assignments == 2 and #violations == 2,
+   "uninstalled bay sizes must provide no fleet capacity")
 local command_ok = runtime.audit_command_shuttle({ hull = "Shark", size = 2 })
 assert(command_ok, "a Shark must fit the S command bay")
 command_ok = runtime.audit_command_shuttle({ hull = "Llama", size = 3 })

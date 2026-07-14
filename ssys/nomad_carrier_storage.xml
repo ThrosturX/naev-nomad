@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ssys name="Nomad Carrier Storage">
+ <general>
+  <radius>1000</radius>
+  <spacedust>0</spacedust>
+  <interference>0</interference>
+  <nolanes/>
+ </general>
+ <pos x="0" y="0"/>
+ <spobs>
+  <spob>Nomad Parked Carrier</spob>
+ </spobs>
+ <jumps/>
+ <tags>
+  <tag>restricted</tag>
+  <tag>spoiler</tag>
+  <tag>noderelicts</tag>
+ </tags>
+</ssys>

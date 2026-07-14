@@ -40,7 +40,7 @@ local fits = policy.can_store(carrier, {
 assert(fits, "a new ship must fit when a compatible bay remains")
 
 local itself, itself_reason = policy.can_store(carrier, {}, {
-   id = "carrier", hull = "Hephaestus", size = 6,
+   id = "carrier", hull = "Arx", size = 6,
 })
 assert(not itself and itself_reason:find("itself"),
    "the tagged carrier must never consume one of its own bays")
