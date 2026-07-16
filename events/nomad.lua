@@ -35,6 +35,7 @@ local initialize_attempts = 0
 local parking_fleet_backup
 local parking_manual_control = false
 local parking_braking = false
+local parking_brake_hook
 local parking_outfit_id
 local parking_outfit_enabled
 local parking_finalizing = false
@@ -1046,7 +1047,14 @@ local function parking_status()
       shield, stats.shield)
 end
 
+local function stop_parking_brake_hook()
+   if not parking_brake_hook then return end
+   hook.rm(parking_brake_hook)
+   parking_brake_hook = nil
+end
+
 local function parking_release_control(pilot)
+   stop_parking_brake_hook()
    local outfit_id = parking_outfit_id
    set_parking_outfit_state(false)
    if outfit_id then
@@ -1077,6 +1085,7 @@ local function parking_brake(pilot)
    if ok then
       parking_braking = true
       set_parking_outfit_state(true)
+      parking_brake_hook = hook.update("nomad_update_parking_brake")
       return true
    end
    parking_release_control(pilot)
@@ -1087,6 +1096,20 @@ local function parking_is_stopped(pilot)
    local velocity = pilot:vel()
    local vx, vy = velocity:get()
    return parking.is_stopped(vx, vy)
+end
+
+function nomad_update_parking_brake()
+   if not parking_requested then
+      stop_parking_brake_hook()
+      return
+   end
+   if tk.isOpen() then return end
+   if not parking_is_stopped(player.pilot()) then return end
+   -- Naev's brake task clears active outfits when it is popped on the next
+   -- AI frame. Capture the Core choice now, after physics crossed the stop
+   -- threshold but before that task cleanup can run.
+   stop_parking_brake_hook()
+   nomad_complete_parking()
 end
 
 local function parking_outfit_is_on()
@@ -1145,7 +1168,6 @@ function nomad_complete_parking()
          nomad_apply_rules()
          return
       end
-      hook.timer(0.25, "nomad_complete_parking")
       return
    end
    -- Naev can clear an active outfit's native state as it cleans up the brake
@@ -1220,7 +1242,12 @@ function nomad_park_carrier(outfit_id)
    parking_outfit_id = outfit_id
    parking_outfit_enabled = nil
    parking_finalizing = false
-   if not parking_brake(player.pilot()) then
+   local pilot = player.pilot()
+   if parking_is_stopped(pilot) then
+      -- Do not create a brake task when already stopped. Popping that task
+      -- clears active outfits before the first deferred Core poll.
+      set_parking_outfit_state(true)
+   elseif not parking_brake(pilot) then
       parking_reuse_record = nil
       tk.msg(_("Unable to Park Carrier"),
          _("The carrier is moving too fast to park."))

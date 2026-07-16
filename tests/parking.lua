@@ -16,6 +16,9 @@ assert(not parking.validate(false, false, 100, 100),
    "only the tagged carrier may be parked")
 assert(not parking.validate(true, true, 100, 100),
    "an already landed carrier cannot be parked again")
+assert(parking.is_stopped(3, 4)
+   and not parking.is_stopped(5.01, 0),
+   "parking must wait until the carrier is nearly stationary")
 
 local record = parking.record(
    'A&B "System"', 123.5, -987.25, 1.75, 'Nomad Park 1&2', 'Home')

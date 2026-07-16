@@ -246,6 +246,9 @@ local fleet_capacity
 local landed = false
 local forced_land_calls = 0
 local normal_land_calls = 0
+local brake_calls = 0
+local control_calls = 0
+local manual_control = false
 local shield = 100
 local shield_capacity = 100
 local info_actions = {}
@@ -267,6 +270,8 @@ local removed_ship
 local last_player_message
 local scheduled_timers = {}
 local pilot_hook_callbacks = {}
+local next_hook_id = 0
+local active_update_hooks = {}
 local teleport_call
 local current_system_name = "Test & System"
 local player_x, player_y = 321.25, -654.5
@@ -289,7 +294,10 @@ local current_pilot = {
          end,
       }
    end,
-   flags = function() return { nojump = nojump_value == true } end,
+   flags = function() return {
+      nojump = nojump_value == true,
+      manualcontrol = manual_control,
+   } end,
    setNoJump = function(_, value) nojump_value = value end,
    outfitsList = function()
       local result = {}
@@ -341,6 +349,11 @@ local current_pilot = {
       return {
          get = function() return player_vx, player_vy end,
       }
+   end,
+   brake = function() brake_calls = brake_calls + 1 end,
+   control = function(_, enabled)
+      control_calls = control_calls + 1
+      manual_control = enabled ~= false
    end,
    dir = function() return 0 end,
    health = function() return 100, shield end,
@@ -592,7 +605,13 @@ pilot = {
    end,
 }
 hook = {
-   update = function(name) registered.update = name end,
+   update = function(name)
+      next_hook_id = next_hook_id + 1
+      active_update_hooks[next_hook_id] = name
+      registered.update = name
+      return next_hook_id
+   end,
+   rm = function(id) active_update_hooks[id] = nil end,
    enter = function(name) registered.enter = name end,
    jumpout = function(name) registered.jumpout = name end,
    land = function(name) registered.land = name end,
@@ -863,9 +882,16 @@ assert(not diff_applied and not mem.nomad.parked
    and scheduled_timers[#scheduled_timers].name == "nomad_complete_parking",
    "parking must wait until the Info window has closed")
 toolkit_open = false
+player_vx, player_vy = config.parking.stop_speed + 1, 0
 nomad_complete_parking()
-assert(diff_applied and mem.nomad.parked
-   and mem.nomad.parked.carrier == selected_starter.hull
+assert(not diff_applied and not mem.nomad.parked
+   and scheduled_timers[#scheduled_timers].name == "nomad_complete_parking",
+   "parking must brake and wait while the carrier is still moving")
+player_vx, player_vy = 0, 0
+nomad_complete_parking()
+assert(diff_applied and mem.nomad.parked,
+   "parking must create its berth after the carrier stops")
+assert(mem.nomad.parked.carrier == selected_starter.hull
    and owned_ships[1].deployed == false
    and not parked_copy:exists()
    and mem.nomad.crafts.Needle.phase == "ready"
@@ -873,6 +899,10 @@ assert(diff_applied and mem.nomad.parked
    "parking must absorb and fully service disposable bay copies")
 assert(forced_land_calls == 1 and normal_land_calls == 0,
    "parking must use the proven direct landing transition")
+assert(brake_calls > 0,
+   "parking must begin by braking the carrier")
+assert(control_calls == 2 and not manual_control,
+   "parking must temporarily take and release manual control to brake")
 local first_parking_record = mem.nomad.parked
 info_actions["Park Carrier"]()
 assert(mem.nomad.parked == first_parking_record and diff_applied
@@ -999,6 +1029,111 @@ assert(not diff_applied and not mem.nomad.departed_parking,
    "repeated parking must remove its own location after departure")
 current_system_name = "Test & System"
 
+-- The Core's native state is sampled once after braking, before Naev's brake
+-- cleanup can alter it. The following poll must use that sampled value.
+local function finish_core_parking()
+   assert(mem.nomad.parked and diff_applied,
+      "an enabled operational core must create a parking berth")
+   landed = false
+   current_spob = nil
+   nomad_takeoff()
+   current_system_name = "Core Parking Cleanup"
+   nomad_apply_rules()
+   local core_cleanup = scheduled_timers[#scheduled_timers]
+   nomad_remove_departed_parking(core_cleanup.arguments[1],
+      core_cleanup.arguments[2])
+   assert(not mem.nomad.parked and not mem.nomad.departed_parking
+      and not diff_applied,
+      "core parking tests must clean up their temporary berth")
+   current_system_name = "Test & System"
+end
+
+local function set_core_choice(active)
+   shared_cache.nomad_parking_core_choices =
+      shared_cache.nomad_parking_core_choices or {}
+   shared_cache.nomad_parking_core_choices[99] = active
+end
+
+local function begin_core_final_poll(active)
+   player_vx, player_vy = config.parking.stop_speed + 1, 0
+   nomad_park_carrier(99)
+   set_core_choice(active)
+   player_vx, player_vy = 0, 0
+   nomad_update_parking_brake()
+   assert(not mem.nomad.parked
+      and scheduled_timers[#scheduled_timers].name == "nomad_complete_parking",
+      "the first stopped Core poll must only capture its native state")
+end
+
+owned_ships = {{
+   name = "Needle", deployed = false,
+   ship = {
+      nameRaw = function() return "Hyena" end,
+      size = function() return 1 end,
+   },
+}}
+mem.nomad.crafts.Needle = { phase = "ready" }
+set_core_choice(true)
+player_vx, player_vy = config.parking.stop_speed + 1, 0
+nomad_park_carrier(99)
+nomad_bay_activated {
+   outfit = "Small Ship Bay", id = parking_s, on = true,
+}
+assert(shared_cache.nomad_parking_core_choices[99] == true,
+   "launching a bay ship while parking must not alter the Core decision")
+player_vx, player_vy = 0, 0
+nomad_complete_parking()
+nomad_complete_parking()
+finish_core_parking()
+owned_ships = {}
+
+set_core_choice(true)
+player_vx, player_vy = 0, 0
+local timers_before_stationary_core = #scheduled_timers
+local brakes_before_stationary_core = brake_calls
+nomad_park_carrier(99)
+assert(not mem.nomad.parked
+   and #scheduled_timers == timers_before_stationary_core + 1
+   and brake_calls == brakes_before_stationary_core,
+   "a stationary Core activation must arm and defer its first stopped poll")
+nomad_complete_parking()
+assert(not mem.nomad.parked,
+   "the deferred first stopped poll must only capture the Core state")
+nomad_complete_parking()
+finish_core_parking()
+
+begin_core_final_poll(true)
+-- This is the exact callback Naev emits when its completed brake task pops.
+-- It must occur after the stopped-frame capture and cannot change the result.
+set_core_choice(false)
+nomad_complete_parking()
+finish_core_parking()
+
+begin_core_final_poll(false)
+nomad_complete_parking()
+assert(not mem.nomad.parked and not diff_applied and not manual_control,
+   "a disabled operational core at the first final poll must resume flight")
+
+set_core_choice(true)
+player_vx, player_vy = config.parking.stop_speed + 1, 0
+nomad_park_carrier(99)
+set_core_choice(false)
+set_core_choice(true)
+player_vx, player_vy = 0, 0
+nomad_complete_parking()
+nomad_complete_parking()
+finish_core_parking()
+
+set_core_choice(true)
+player_vx, player_vy = config.parking.stop_speed + 1, 0
+nomad_park_carrier(99)
+set_core_choice(false)
+player_vx, player_vy = 0, 0
+nomad_complete_parking()
+nomad_complete_parking()
+assert(not mem.nomad.parked and not diff_applied and not manual_control,
+   "turning the operational core off before the first final poll must resume flight")
+shared_cache.nomad_parking_core_choices = nil
 reject_next_diff = true
 nomad_park_carrier()
 assert(not diff_applied and not mem.nomad.parked

@@ -39,7 +39,8 @@ onadd(player_pilot, pilot_outfit)
 assert(triggered.name == "nomad_bay_configuration_changed"
    and triggered.payload.id == 7,
    "adding a bay control must request capacity validation")
-assert(ontoggle(player_pilot, pilot_outfit, true), "bay activation must be handled")
+assert(ontoggle(player_pilot, pilot_outfit, true, true),
+   "bay activation must be handled")
 assert(triggered.name == "nomad_bay_activated"
    and triggered.payload.outfit == "Small Ship Bay"
    and triggered.payload.id == 7 and triggered.payload.on == true,
@@ -57,11 +58,12 @@ local trigger_count = #triggers
 update(player_pilot, pilot_outfit)
 assert(states[#states] == "cooldown" and progress[#progress] == 0.5,
    "a repairing bay must use the native outfit cooldown display")
-assert(not ontoggle(player_pilot, pilot_outfit, true) and #triggers == trigger_count
+assert(not ontoggle(player_pilot, pilot_outfit, true, true)
+   and #triggers == trigger_count
    and states[#states] == "cooldown",
    "activating a cooling bay must not emit a launch request")
 shared.nomad_bay_cooldowns[7] = nil
-assert(ontoggle(player_pilot, pilot_outfit, false)
+assert(ontoggle(player_pilot, pilot_outfit, false, true)
    and triggered.payload.on == false and states[#states] == "off",
    "turning the control off must request recall")
 
@@ -87,12 +89,36 @@ dofile("outfits/nomad_integrated.lua")
 init(player_pilot, pilot_outfit)
 assert(states[#states] == "off",
    "integrated systems must initialize in their one-shot off state")
-ontoggle(player_pilot, pilot_outfit, true)
+ontoggle(player_pilot, pilot_outfit, true, true)
 assert(triggered.name == "nomad_integrated_system_activated"
-   and triggered.payload.action == "park" and states[#states] == "off",
+   and triggered.payload.action == "park" and triggered.payload.id == 7
+   and states[#states] == "off",
    "the operational core must trigger carrier parking")
+shared.nomad_integrated_states = { [7] = true }
+shared.nomad_integrated_states[7] = "arming"
+update(player_pilot, pilot_outfit)
+assert(states[#states] == "on" and shared.nomad_integrated_states[7] == "armed",
+   "parking must set the operational core on once after activation")
+assert(shared.nomad_parking_core_choices[7] == true,
+   "arming must retain the player's enabled Core choice")
+local state_count = #states
+assert(not ontoggle(player_pilot, pilot_outfit, false, false),
+   "automatic engine toggles must not be treated as native Core input")
+assert(shared.nomad_parking_core_choices[7] == true,
+   "automatic engine toggles must not cancel parking")
+assert(not ontoggle(player_pilot, pilot_outfit, "off", true),
+   "malformed Core toggle arguments must be rejected")
+assert(ontoggle(player_pilot, pilot_outfit, false, true),
+   "the operational core must allow its native state to be toggled while parking")
+assert(shared.nomad_parking_core_choices[7] == false,
+   "a native Core-off toggle must cancel parking")
+shared.nomad_integrated_states[7] = "arming"
+update(player_pilot, pilot_outfit)
+assert(#states == state_count + 1,
+   "arming updates must restore the Core's rendered native state")
+shared.nomad_integrated_states[7] = "off"
 integrated_name = "Shuttle Bay"
-ontoggle(player_pilot, pilot_outfit, true)
+ontoggle(player_pilot, pilot_outfit, true, true)
 assert(triggered.name == "nomad_integrated_system_activated"
    and triggered.payload.action == "shuttle",
    "the shuttle bay must trigger command shuttle launch")
