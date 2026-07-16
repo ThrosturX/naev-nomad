@@ -23,6 +23,7 @@
    <outfits/>
    <nomissionspawn/>
    <uninhabited/>
+   <nolanes/>
   </services>
   <description>Your carrier is secured for maintenance and fleet reconfiguration.</description>
   <bar>The carrier's mess hall is the heart of shipboard life while the vessel is parked. Off-duty crewmates gather around its battered tables to eat, trade stories, and discuss the voyage ahead.</bar>

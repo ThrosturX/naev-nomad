@@ -5,11 +5,8 @@ config.joyride_client = "nomad"
 config.joyride_profile = {
    client = config.joyride_client,
    landable = true,
-   landed_ship_lock = true,
-   protect_mothership_sale = true,
    trade_replacement = true,
    owned_handoff = true,
-   owned_escorts = true,
 }
 config.active_var = "nomad_active"
 config.start_chapter_var = "nomad_start_chapter"

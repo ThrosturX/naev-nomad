@@ -4,6 +4,10 @@ local function cache()
    return shared.nomad_bay_tooltips
 end
 
+local function is_player(subject)
+   return subject == player.pilot()
+end
+
 local function desired_state(id)
    local shared = naev.cache()
    shared.nomad_bay_states = shared.nomad_bay_states or {}
@@ -19,37 +23,47 @@ end
 local function apply_state(pilot_outfit)
    local id = pilot_outfit:id()
    local cooling = cooldown(id)
+   local shared = naev.cache()
+   shared.nomad_bay_rendered = shared.nomad_bay_rendered or {}
+   local mode
    if cooling and cooling.remaining > 0 then
-      pilot_outfit:state("cooldown")
+      mode = "cooldown"
+      if shared.nomad_bay_rendered[id] ~= mode then
+         pilot_outfit:state(mode)
+         shared.nomad_bay_rendered[id] = mode
+      end
       pilot_outfit:progress(cooling.remaining / cooling.total)
    else
-      pilot_outfit:state(desired_state(id) and "on" or "off")
+      mode = desired_state(id) and "on" or "off"
+      if shared.nomad_bay_rendered[id] ~= mode then
+         pilot_outfit:state(mode)
+         shared.nomad_bay_rendered[id] = mode
+      end
    end
 end
 
-function descextra(_pilot, _outfit, pilot_outfit)
-   if not pilot_outfit then return nil end
+function descextra(subject, _outfit, pilot_outfit)
+   if not is_player(subject) or not pilot_outfit then return nil end
    return cache()[pilot_outfit:id()]
 end
 
-function init(_pilot, pilot_outfit)
+function init(subject, pilot_outfit)
+   if not is_player(subject) then return end
    local shared = naev.cache()
    shared.nomad_bay_states = shared.nomad_bay_states or {}
+   shared.nomad_bay_rendered = shared.nomad_bay_rendered or {}
    shared.nomad_bay_states[pilot_outfit:id()] = false
+   shared.nomad_bay_rendered[pilot_outfit:id()] = "off"
    pilot_outfit:state("off")
 end
 
-function update(_pilot, pilot_outfit)
+function update(subject, pilot_outfit)
+   if not is_player(subject) then return end
    apply_state(pilot_outfit)
 end
 
-function onadd(_pilot, pilot_outfit)
-   naev.trigger("nomad_bay_configuration_changed", {
-      id = pilot_outfit:id(),
-   })
-end
-
-function onremove(_pilot, pilot_outfit)
+function onremove(subject, pilot_outfit)
+   if not is_player(subject) then return end
    local assignments = naev.cache().nomad_bay_assignments or {}
    local assigned = assignments[pilot_outfit:id()]
    if assigned then
@@ -66,15 +80,19 @@ function onremove(_pilot, pilot_outfit)
    })
 end
 
-function ontoggle(_pilot, pilot_outfit, on)
+function ontoggle(subject, pilot_outfit, on)
+   if not is_player(subject) then return false end
    if on and cooldown(pilot_outfit:id()) then
       apply_state(pilot_outfit)
       return false
    end
    local shared = naev.cache()
    shared.nomad_bay_states = shared.nomad_bay_states or {}
+   shared.nomad_bay_rendered = shared.nomad_bay_rendered or {}
    shared.nomad_bay_states[pilot_outfit:id()] = on == true
-   pilot_outfit:state(on and "on" or "off")
+   local mode = on and "on" or "off"
+   pilot_outfit:state(mode)
+   shared.nomad_bay_rendered[pilot_outfit:id()] = mode
    naev.trigger("nomad_bay_activated", {
       outfit = pilot_outfit:outfit():nameRaw(),
       id = pilot_outfit:id(),

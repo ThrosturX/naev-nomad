@@ -10,36 +10,33 @@ local live_pilots = {}
 local applied_health = {}
 package.preload.joyride = function()
    return {
-      swap_to_subship = function(carrier, template, acquired, profile)
+      begin_owned_sortie = function(name, template, profile)
          swap_call = {
-            carrier = carrier, template = template,
-            acquired = acquired, profile = profile,
+            name = name, template = template, profile = profile,
          }
          if template and template.rm then template:rm() end
          naev.cache().joyride = {
-            profile = profile, mothership = player.ship(), kind = "virtual",
+            profile = profile, mothership = player.ship(),
+            controlled = name, kind = "owned",
          }
          return player.pilot()
       end,
       end_joyride = function(options)
          end_joyride_call = options or {}
+         local state = naev.cache().joyride
+         if state and _G.nomad_joyride_returning then
+            nomad_joyride_returning {
+               client = state.profile and state.profile.client or "nomad",
+               returned_kind = state.kind,
+               returned_name = state.controlled,
+               seat_transfer = end_joyride_call.seat_transfer == true,
+            }
+         end
          naev.cache().joyride = nil
          return true
       end,
       handoff_to_owned = function(name)
          handoff_call = name
-         return true
-      end,
-      borrow_owned = function(name, profile, options)
-         options = options or {}
-         borrow_call = {
-            name = name, profile = profile,
-            mothership = options.mothership, transform = options,
-         }
-         naev.cache().joyride = {
-            profile = profile, mothership = options.mothership,
-            controlled = player.ship(), kind = "owned",
-         }
          return true
       end,
       begin_stored_owned_sortie = function(mothership, profile, position, direction)
@@ -51,7 +48,18 @@ package.preload.joyride = function()
          naev.cache().joyride = {
             profile = profile, mothership = mothership,
             controlled = player.ship(), kind = "owned",
+            pilot = {
+               exists = function() return true end,
+               outfits = function() return {} end,
+               setActiveBoard = function() end,
+            },
          }
+         if _G.nomad_joyride_started then
+            nomad_joyride_started {
+               client = profile.client,
+               pilot = naev.cache().joyride.pilot,
+            }
+         end
          return true
       end,
       takeoff = function()
@@ -262,6 +270,7 @@ local pilot_hook_callbacks = {}
 local teleport_call
 local current_system_name = "Test & System"
 local player_x, player_y = 321.25, -654.5
+local player_vx, player_vy = 0, 0
 mem = {}
 local current_pilot = {
    ship = function()
@@ -328,7 +337,11 @@ local current_pilot = {
    end,
    exists = function() return true end,
    msg = function() end,
-   vel = function() return "velocity" end,
+   vel = function()
+      return {
+         get = function() return player_vx, player_vy end,
+      }
+   end,
    dir = function() return 0 end,
    health = function() return 100, shield end,
    energy = function() return 100 end,
@@ -521,6 +534,11 @@ pilot = {
       local leader
       local direction = 0
       local position = spawn_position
+      local velocity = vec2.new(0, 0)
+      local candidate_outfits = {
+         [99] = { nameRaw = function() return "Base Locked Hull Outfit" end },
+      }
+      local default_outfits = { [99] = true }
       if not position.dist then position.dist = function() return 0 end end
       local candidate = {
          name = function() return name end,
@@ -528,8 +546,17 @@ pilot = {
          withPlayer = function() return true end,
          rm = function() exists = false end,
          outfitAdd = function() end,
-         outfitAddSlot = function() return true end,
-         outfits = function() return {} end,
+         outfitAddSlot = function(_, outfit_name, id)
+            if candidate_outfits[id] and not default_outfits[id] then
+               return false
+            end
+            candidate_outfits[id] = {
+               nameRaw = function() return outfit_name end,
+            }
+            default_outfits[id] = nil
+            return true
+         end,
+         outfits = function() return candidate_outfits end,
          setLeader = function(_, value) leader = value end,
          leader = function() return leader end,
          setNoClear = function() end,
@@ -537,6 +564,8 @@ pilot = {
          setInvincPlayer = function() end,
          setDir = function(_, value) direction = value end,
          dir = function() return direction end,
+         setVel = function(_, value) velocity = value end,
+         vel = function() return velocity end,
          setHealth = function(_, armour, shield_value, stress)
             applied_health[#applied_health + 1] = {
                armour = armour, shield = shield_value, stress = stress,
@@ -617,9 +646,7 @@ assert(ensured_commander.client == config.joyride_client,
 assert(ensured_commander.options.minimum == config.minimum_crew.commander
    and ensured_commander.options.shuttle == config.starter_subship.hull
    and ensured_commander.options.shuttle_profile.client == config.joyride_client
-   and ensured_commander.options.shuttle_profile.landable == true
-   and ensured_commander.options.shuttle_profile.landed_ship_lock == true
-   and ensured_commander.options.shuttle_profile.protect_mothership_sale == true,
+   and ensured_commander.options.shuttle_profile.landable == true,
    "Crewmates must guarantee the configured commander and shuttle")
 assert(fleet_capacity == config.fleet_capacity,
    "Nomad initialization must restore generous vanilla fleet capacity")
@@ -670,6 +697,11 @@ owned_ships = {{
       size = function() return 1 end,
    },
 }}
+mem.nomad.crafts.Needle = {
+   phase = "ready",
+   snapshot = { hull = "Soromid Arx", outfits = {}, cargo = {} },
+   redeploy_transform = { x = 1, y = 2, direction = 3 },
+}
 local first_s = physical_id("Small Ship Bay", 1)
 nomad_bay_activated { outfit = "Small Ship Bay", id = first_s, on = true }
 assert(not deploy_call and owned_ships[1].deployed == false
@@ -677,12 +709,18 @@ assert(not deploy_call and owned_ships[1].deployed == false
    "activating an occupied bay must launch its carried ship")
 assert(#live_pilots == 1 and live_pilots[1]:exists(),
    "launching must create exactly one plugin-owned carried pilot")
+assert(mem.nomad.crafts.Needle.snapshot.hull == "Hyena"
+   and mem.nomad.crafts.Needle.redeploy_transform == nil,
+   "launch must repair a persisted snapshot belonging to the wrong hull")
 assert(not command_launch_call and not borrow_call,
    "general-bay activation must not start an owned-ship Joyride")
 assert(shared_cache.nomad_bay_tooltips[first_s] == "Deployed: Needle (Hyena)",
    "launching must refresh the physical control's deployed tooltip")
 assert(shared_cache.nomad_bay_assignments[first_s].name == "Needle",
    "assigned ships must be cached by their physical bay controls")
+assert(live_pilots[1]:outfitAddSlot(
+   "Evolved Locked Hull Outfit", 99, true, false),
+   "the fixture must model a locked outfit that differs from the base hull")
 nomad_bay_activated { outfit = "Small Ship Bay", id = first_s, on = false }
 assert(not deploy_call and live_pilots[1]:exists()
    and mem.nomad.crafts.Needle.phase == "returning",
@@ -709,6 +747,9 @@ assert(mem.nomad.crafts.Needle.phase == "ready"
 nomad_bay_activated { outfit = "Small Ship Bay", id = first_s, on = true }
 assert(applied_health[#applied_health].shield == 100,
    "an intact recalled craft must relaunch with serviced shields")
+assert(live_pilots[2]:outfits()[99]:nameRaw() ==
+   "Evolved Locked Hull Outfit",
+   "relaunch must replace a base locked outfit with the saved variant")
 local closes_before_hail = comm_close_calls
 local timers_before_hail = #scheduled_timers
 nomad_hail_owned(live_pilots[2], "Needle")
@@ -716,15 +757,16 @@ assert(comm_close_calls == closes_before_hail + 1 and not swap_call
    and #scheduled_timers == timers_before_hail + 1
    and scheduled_timers[#scheduled_timers].name == "nomad_begin_owned_joyride",
    "hailing a bay craft must close the stock escort comm before deferring the swap")
-nomad_begin_owned_joyride()
+nomad_begin_owned_joyride("Needle", live_pilots[2])
 assert(swap_call and swap_call.template == live_pilots[2]
    and not live_pilots[2]:exists()
-   and mem.nomad.active_kind == "virtual",
+   and mem.nomad.active_kind == "owned",
    "hailing a launched carried pilot must transfer control through Joyride")
 end_joyride_call = nil
 current_hull = "Hyena"
 current_size = 1
 player_x, player_y = 987.5, -432.25
+player_vx, player_vy = 731.25, -94.5
 mem.nomad.virtual_name = current_hull
 nomad_joyride_started({ client = config.joyride_client })
 mem.nomad.crafts.Needle.remaining = 7
@@ -733,11 +775,14 @@ shared_cache.nomad_bay_cooldowns[first_s] = {
    remaining = 7, total = 10,
 }
 nomad_hail_mothership()
-nomad_complete_mothership_hail()
+local hail_timer = scheduled_timers[#scheduled_timers]
+nomad_complete_mothership_hail(hail_timer.arguments[1])
 assert(end_joyride_call,
    "hailing the carrier from a bay craft must begin a deferred seat transfer: "
       .. tostring(last_player_message) .. " / "
       .. tostring(carrier_status and carrier_status.message))
+assert(mem.nomad.crafts.Needle.snapshot.hull == "Hyena",
+   "carrier hail must snapshot the controlled craft before Joyride swaps seats")
 current_hull = selected_starter.hull
 current_size = 6
 nomad_joyride_ended({ client = config.joyride_client })
@@ -745,6 +790,8 @@ assert(mem.nomad.crafts.Needle.phase == "deployed"
    and live_pilots[#live_pilots]:exists()
    and live_pilots[#live_pilots]:pos().x == 987.5
    and live_pilots[#live_pilots]:pos().y == -432.25
+   and live_pilots[#live_pilots]:vel().x == 731.25
+   and live_pilots[#live_pilots]:vel().y == -94.5
    and shared_cache.nomad_bay_states[first_s] == true
    and shared_cache.nomad_bay_cooldowns[first_s] == nil
    and mem.nomad.crafts.Needle.remaining == nil,
@@ -758,10 +805,6 @@ mem.nomad.active_source = nil
 shared_cache.joyride = nil
 
 owned_ships[1].deployed = true
-local timers_before_retry = #scheduled_timers
-nomad_refresh_escort_hooks()
-assert(#scheduled_timers == timers_before_retry,
-   "native fleet flags must not be mistaken for Nomad carried pilots")
 owned_ships[1].deployed = false
 
 installed_outfits[first_s] = nil
@@ -867,7 +910,8 @@ landed = false
 current_spob = nil
 local parked_record = mem.nomad.parked
 nomad_takeoff()
-assert(mem.nomad.parked == parked_record and diff_applied
+assert(not mem.nomad.parked and mem.nomad.departed_parking == parked_record
+   and diff_applied
    and shared_cache.joyride and mem.nomad.active_kind == "owned"
    and mem.nomad.active_source == "bay"
    and mem.nomad.virtual_name == nil
@@ -879,22 +923,15 @@ assert(mem.nomad.parked == parked_record and diff_applied
    and restored_position.y == -654.5
    and restored_direction == parked_record.direction
    and scheduled_timers[#scheduled_timers].name ==
-      "nomad_finish_stored_carrier_takeoff",
-   "stored-ship takeoff must adopt the selection and spawn its recorded carrier")
-nomad_finish_stored_carrier_takeoff(parked_record)
-assert(not mem.nomad.parked and mem.nomad.departed_parking == parked_record
-   and diff_applied and teleport_call == nil,
-   "takeoff must retain the departure berth until its spob leaves Naev's active stack")
-nomad_spawn_stored_carrier()
-
-landed = true
-current_system_name = "Ordinary System"
-current_spob = { nameRaw = function() return "Ordinary Spob" end }
-nomad_landed()
-nomad_remove_departed_parking()
+      "nomad_remove_departed_parking",
+   "stored-ship takeoff must atomically adopt the selection and spawn its recorded carrier")
+local cleanup = scheduled_timers[#scheduled_timers]
+assert(cleanup.name == "nomad_remove_departed_parking",
+   "successful carrier restoration must schedule stable-space berth cleanup")
+nomad_remove_departed_parking(cleanup.arguments[1], cleanup.arguments[2])
 assert(not mem.nomad.parked and not mem.nomad.departed_parking
    and not diff_applied and nojump_value ~= true,
-   "the first post-departure system must remove the old berth and re-audit")
+   "stable-space cleanup must remove the old berth immediately after unpark")
 current_system_name = "Test & System"
 
 current_hull = selected_starter.hull
@@ -918,7 +955,7 @@ landed = false
 current_spob = nil
 nomad_takeoff()
 assert(diff_applied and not mem.nomad.parked and mem.nomad.departed_parking,
-   "carrier takeoff must retain its departure berth until the first jump")
+   "carrier takeoff must retain its departure berth until stable-space cleanup")
 local departed_diff_name = current_diff_name
 landed = false
 nomad_park_carrier()
@@ -926,6 +963,7 @@ assert(diff_applied and mem.nomad.departed_parking
    and scheduled_timers[#scheduled_timers].name == "nomad_complete_parking",
    "reparking must keep the active-system berth intact until landing")
 nomad_complete_parking()
+nomad_landed()
 assert(diff_applied and mem.nomad.parked
    and not mem.nomad.departed_parking
    and current_diff_name == departed_diff_name,
@@ -935,9 +973,10 @@ current_spob = nil
 nomad_takeoff()
 current_system_name = "Cleanup System"
 nomad_apply_rules()
-nomad_remove_departed_parking()
+cleanup = scheduled_timers[#scheduled_timers]
+nomad_remove_departed_parking(cleanup.arguments[1], cleanup.arguments[2])
 assert(not diff_applied and not mem.nomad.departed_parking,
-   "carrier departure must remove its old berth after changing systems")
+   "carrier departure must remove its old berth in stable space")
 current_system_name = "Test & System"
 
 local first_diff_name = current_diff_name
@@ -954,7 +993,8 @@ assert(diff_applied and mem.nomad.departed_parking,
    "repeated parking must retain only its active departure berth")
 current_system_name = "Second Cleanup System"
 nomad_apply_rules()
-nomad_remove_departed_parking()
+cleanup = scheduled_timers[#scheduled_timers]
+nomad_remove_departed_parking(cleanup.arguments[1], cleanup.arguments[2])
 assert(not diff_applied and not mem.nomad.departed_parking,
    "repeated parking must remove its own location after departure")
 current_system_name = "Test & System"
@@ -1106,12 +1146,14 @@ end
 end_joyride_call = nil
 last_player_message = nil
 mem.nomad.active_source = "command"
+shared_cache.joyride = { pilot = mothership, token = 1001 }
 nomad_hail_mothership()
 assert(end_joyride_call == nil
    and scheduled_timers[#scheduled_timers].name ==
       "nomad_complete_mothership_hail",
    "mothership hailing must defer the transition until comms have closed")
-nomad_complete_mothership_hail()
+hail_timer = scheduled_timers[#scheduled_timers]
+nomad_complete_mothership_hail(hail_timer.arguments[1])
 assert(last_player_message:find("must dock", 1, true),
    "hailing from the command shuttle must not bypass its docking return path")
 mem.nomad.active_kind = "virtual"
@@ -1122,21 +1164,14 @@ mem.nomad.virtual_name = current_hull
 nomad_hail_mothership()
 assert(end_joyride_call == nil,
    "bay-craft seat transfer must not remove the hailed carrier in its hail hook")
-nomad_complete_mothership_hail()
-assert(end_joyride_call and end_joyride_call.redeploy_owned == nil,
+hail_timer = scheduled_timers[#scheduled_timers]
+nomad_complete_mothership_hail(hail_timer.arguments[1])
+assert(end_joyride_call and end_joyride_call.seat_transfer == true,
    "a large bay craft must not be audited as the command shuttle")
 mem.nomad.active_kind = "virtual"
 mem.nomad.active_source = nil
 current_hull = "Alpaca"
 current_size = 2
-assert(registered.joyride_mothership_restored == "nomad_mothership_restored",
-   "Nomad must listen for restored mothership ownership")
-nomad_mothership_restored({
-   client = config.joyride_client,
-   name = "Restored Carrier",
-})
-assert(restored_carrier_name == "Restored Carrier",
-   "a restored mothership must recover its stable carrier tag")
 
 current_hull = "Llama"
 current_size = 3
@@ -1182,7 +1217,8 @@ mem.nomad.parked = { carrier = selected_starter.hull }
 shared_cache.joyride = { kind = "owned" }
 player_x, player_y = 2468.5, -1357.25
 nomad_hail_mothership()
-nomad_complete_mothership_hail()
+hail_timer = scheduled_timers[#scheduled_timers]
+nomad_complete_mothership_hail(hail_timer.arguments[1])
 mem.nomad.parked = nil
 current_hull = selected_starter.hull
 current_size = 6

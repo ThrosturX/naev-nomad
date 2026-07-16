@@ -3,11 +3,13 @@ local actions = {
    ["Shuttle Bay"] = "shuttle",
 }
 
-function init(_pilot, pilot_outfit)
+function init(subject, pilot_outfit)
+   if subject ~= player.pilot() then return end
    pilot_outfit:state("off")
 end
 
-function ontoggle(_pilot, pilot_outfit, on)
+function ontoggle(subject, pilot_outfit, on)
+   if subject ~= player.pilot() then return false end
    pilot_outfit:state("off")
    if not on then return true end
    naev.trigger("nomad_integrated_system_activated", {
