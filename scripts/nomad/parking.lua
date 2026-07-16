@@ -38,6 +38,11 @@ function parking.validate(aboard_carrier, landed, shield, shield_capacity)
    return true
 end
 
+function parking.is_stopped(vx, vy)
+   local maximum = config.parking.stop_speed
+   return vx * vx + vy * vy <= maximum * maximum
+end
+
 function parking.diff_xml(record)
    return string.format([[
 <unidiff name="%s">

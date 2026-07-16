@@ -33,6 +33,12 @@ local maintenance_hook
 local parking_cleanup_token = 0
 local initialize_attempts = 0
 local parking_fleet_backup
+local parking_manual_control = false
+local parking_braking = false
+local parking_outfit_id
+local parking_outfit_enabled
+local parking_finalizing = false
+local parking_bay_guard_token = 0
 local register_actions
 local hooks_installed = false
 local is_carrier
@@ -65,6 +71,32 @@ local function set_bay_cooldown(id, remaining, total)
       shared.nomad_bay_cooldowns[id] = cooling
    else
       shared.nomad_bay_cooldowns[id] = nil
+   end
+end
+
+local function set_parking_outfit_state(on)
+   if not parking_outfit_id then return end
+   local shared = naev.cache()
+   shared.nomad_integrated_states = shared.nomad_integrated_states or {}
+   shared.nomad_integrated_states[parking_outfit_id] = on and "arming" or "off"
+end
+
+local function protect_parking_core_from_bay_toggle()
+   if not parking_requested or not parking_outfit_id then return end
+   parking_bay_guard_token = parking_bay_guard_token + 1
+   local token = parking_bay_guard_token
+   local shared = naev.cache()
+   shared.nomad_parking_bay_guards =
+      shared.nomad_parking_bay_guards or {}
+   shared.nomad_parking_bay_guards[parking_outfit_id] = token
+   hook.timer(0.01, "nomad_clear_parking_bay_guard",
+      parking_outfit_id, token)
+end
+
+function nomad_clear_parking_bay_guard(outfit_id, token)
+   local guards = naev.cache().nomad_parking_bay_guards
+   if guards and guards[outfit_id] == token then
+      guards[outfit_id] = nil
    end
 end
 
@@ -726,6 +758,7 @@ function nomad_bay_activated(payload)
    local mapped = runtime.map_bay_slots(current_bays(), physical_bay_slots())
    local slot = mapped[payload.id]
    if not slot or slot.bay.outfit ~= payload.outfit then return end
+   protect_parking_core_from_bay_toggle()
    local assignments = audit_now()
    local assigned = runtime.ship_for_bay(assignments, slot.index)
    if not assigned then
@@ -808,7 +841,7 @@ end
 function nomad_integrated_system_activated(payload)
    if not payload or not is_carrier(player.ship()) then return end
    if payload.action == "park" then
-      nomad_park_carrier()
+      nomad_park_carrier(payload.id)
    elseif payload.action == "shuttle" then
       nomad_launch_command_shuttle()
    end
@@ -1013,6 +1046,55 @@ local function parking_status()
       shield, stats.shield)
 end
 
+local function parking_release_control(pilot)
+   local outfit_id = parking_outfit_id
+   set_parking_outfit_state(false)
+   if outfit_id then
+      local choices = naev.cache().nomad_parking_core_choices
+      if choices then choices[outfit_id] = nil end
+      local guards = naev.cache().nomad_parking_bay_guards
+      if guards then guards[outfit_id] = nil end
+   end
+   parking_outfit_id = nil
+   parking_outfit_enabled = nil
+   parking_finalizing = false
+   if parking_manual_control then
+      parking_manual_control = false
+      pcall(pilot.control, pilot, false)
+   end
+   parking_braking = false
+end
+
+local function parking_brake(pilot)
+   local flags = pilot:flags()
+   if not flags.manualcontrol then
+      local ok = pcall(pilot.control, pilot, true)
+      if not ok then return false end
+      parking_manual_control = true
+   end
+   if parking_braking then return true end
+   local ok = pcall(pilot.brake, pilot)
+   if ok then
+      parking_braking = true
+      set_parking_outfit_state(true)
+      return true
+   end
+   parking_release_control(pilot)
+   return false
+end
+
+local function parking_is_stopped(pilot)
+   local velocity = pilot:vel()
+   local vx, vy = velocity:get()
+   return parking.is_stopped(vx, vy)
+end
+
+local function parking_outfit_is_on()
+   if not parking_outfit_id then return true end
+   local choices = naev.cache().nomad_parking_core_choices or {}
+   return choices[parking_outfit_id] == true
+end
+
 local function service_bay_fleet()
    for name, state in pairs(mem.nomad.crafts or {}) do
       local candidate = live_bay_pilot(name)
@@ -1032,23 +1114,59 @@ function nomad_complete_parking()
       else
          parking_requested = nil
          parking_reuse_record = nil
+         parking_release_control(player.pilot())
          player.msg(_("Parking cancelled because the Info window remained open."))
          nomad_apply_rules()
       end
       return
    end
-   parking_requested = nil
-   parking_request_attempts = 0
 
    local ok, reason = parking_status()
    if not ok then
+      parking_requested = nil
+      parking_request_attempts = 0
       parking_reuse_record = nil
+      parking_release_control(player.pilot())
       tk.msg(_("Unable to Park Carrier"), tostring(reason))
       nomad_apply_rules()
       return
    end
 
    local pilot = player.pilot()
+   if not parking_is_stopped(pilot) then
+      -- Match a normal landing attempt: brake first, then complete the
+      -- transition only after the carrier has safely come to a stop.
+      if not parking_brake(pilot) then
+         parking_requested = nil
+         parking_request_attempts = 0
+         parking_reuse_record = nil
+         tk.msg(_("Unable to Park Carrier"),
+            _("The carrier is moving too fast to park."))
+         nomad_apply_rules()
+         return
+      end
+      hook.timer(0.25, "nomad_complete_parking")
+      return
+   end
+   -- Naev can clear an active outfit's native state as it cleans up the brake
+   -- task. Capture it on one final stopped poll, before releasing control.
+   -- Info-menu parking has no active outfit, so it keeps its direct flow.
+   if parking_outfit_id and not parking_finalizing then
+      parking_outfit_enabled = parking_outfit_is_on()
+      parking_finalizing = true
+      hook.timer(0.1, "nomad_complete_parking")
+      return
+   end
+
+   local outfit_enabled = parking_outfit_enabled
+   parking_requested = nil
+   parking_request_attempts = 0
+   if parking_outfit_id and not outfit_enabled then
+      parking_reuse_record = nil
+      parking_release_control(pilot)
+      return
+   end
+   parking_release_control(pilot)
    local position = pilot:pos()
    local x, y = position:get()
    local current_system = system.cur()
@@ -1093,10 +1211,20 @@ function nomad_complete_parking()
    end
 end
 
-function nomad_park_carrier()
+function nomad_park_carrier(outfit_id)
    local ok, reason = parking_status()
    if not ok then
       tk.msg(_("Unable to Park Carrier"), tostring(reason))
+      return
+   end
+   parking_outfit_id = outfit_id
+   parking_outfit_enabled = nil
+   parking_finalizing = false
+   if not parking_brake(player.pilot()) then
+      parking_reuse_record = nil
+      tk.msg(_("Unable to Park Carrier"),
+         _("The carrier is moving too fast to park."))
+      nomad_apply_rules()
       return
    end
    -- The relocated spob must not be removed while its system is active: Naev
@@ -1118,6 +1246,12 @@ function nomad_park_carrier()
    parking_request_attempts = 0
    if tk.isOpen() then
       bay_action_message(_("Close the Info window to park the carrier."))
+      hook.timer(0.1, "nomad_complete_parking")
+      return
+   end
+   -- Let the Core finish its activation callback and render its native on
+   -- state before the first stopped poll captures the player's choice.
+   if outfit_id then
       hook.timer(0.1, "nomad_complete_parking")
       return
    end
