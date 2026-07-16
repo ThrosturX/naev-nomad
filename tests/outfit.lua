@@ -1,6 +1,7 @@
 local triggered
 local triggers = {}
 local states = {}
+local progress = {}
 local shared = {
    nomad_bay_tooltips = { [7] = "Assigned: Needle (Hyena)" },
    nomad_bay_assignments = {
@@ -22,6 +23,7 @@ local pilot_outfit = {
    id = function() return 7 end,
    outfit = function() return outfit end,
    state = function(_, value) states[#states + 1] = value end,
+   progress = function(_, value) progress[#progress + 1] = value end,
 }
 
 dofile("outfits/nomad_bay.lua")
@@ -39,6 +41,18 @@ assert(states[#states] == "on",
 update(nil, pilot_outfit)
 assert(states[#states] == "on",
    "the physical control must follow its runtime desired state")
+
+shared.nomad_bay_cooldowns = {
+   [7] = { remaining = 5, total = 10 },
+}
+local trigger_count = #triggers
+update(nil, pilot_outfit)
+assert(states[#states] == "cooldown" and progress[#progress] == 0.5,
+   "a repairing bay must use the native outfit cooldown display")
+assert(not ontoggle(nil, pilot_outfit, true) and #triggers == trigger_count
+   and states[#states] == "cooldown",
+   "activating a cooling bay must not emit a launch request")
+shared.nomad_bay_cooldowns[7] = nil
 assert(ontoggle(nil, pilot_outfit, false)
    and triggered.payload.on == false and states[#states] == "off",
    "turning the control off must request recall")

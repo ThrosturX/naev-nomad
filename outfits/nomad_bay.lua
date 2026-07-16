@@ -10,6 +10,23 @@ local function desired_state(id)
    return shared.nomad_bay_states[id] == true
 end
 
+local function cooldown(id)
+   local shared = naev.cache()
+   shared.nomad_bay_cooldowns = shared.nomad_bay_cooldowns or {}
+   return shared.nomad_bay_cooldowns[id]
+end
+
+local function apply_state(pilot_outfit)
+   local id = pilot_outfit:id()
+   local cooling = cooldown(id)
+   if cooling and cooling.remaining > 0 then
+      pilot_outfit:state("cooldown")
+      pilot_outfit:progress(cooling.remaining / cooling.total)
+   else
+      pilot_outfit:state(desired_state(id) and "on" or "off")
+   end
+end
+
 function descextra(_pilot, _outfit, pilot_outfit)
    if not pilot_outfit then return nil end
    return cache()[pilot_outfit:id()]
@@ -23,7 +40,7 @@ function init(_pilot, pilot_outfit)
 end
 
 function update(_pilot, pilot_outfit)
-   pilot_outfit:state(desired_state(pilot_outfit:id()) and "on" or "off")
+   apply_state(pilot_outfit)
 end
 
 function onadd(_pilot, pilot_outfit)
@@ -50,6 +67,10 @@ function onremove(_pilot, pilot_outfit)
 end
 
 function ontoggle(_pilot, pilot_outfit, on)
+   if on and cooldown(pilot_outfit:id()) then
+      apply_state(pilot_outfit)
+      return false
+   end
    local shared = naev.cache()
    shared.nomad_bay_states = shared.nomad_bay_states or {}
    shared.nomad_bay_states[pilot_outfit:id()] = on == true

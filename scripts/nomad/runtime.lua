@@ -1,6 +1,5 @@
 local config = require "nomad.config"
 local policy = require "nomad.fleet_policy"
-local joyride = require "joyride"
 
 local runtime = {}
 
@@ -9,15 +8,6 @@ function runtime.initialize(saved)
       return saved
    end
    return { version = config.state_version }
-end
-
-function runtime.joyride_available()
-   return type(joyride.swap_to_subship) == "function"
-      and type(joyride.end_joyride) == "function"
-      and type(joyride.handoff_to_owned) == "function"
-      and type(joyride.borrow_owned) == "function"
-      and type(joyride.begin_stored_sortie) == "function"
-      and type(joyride.takeoff) == "function"
 end
 
 function runtime.craft_state(saved, name)
@@ -51,6 +41,7 @@ function runtime.tick_cooldown(state, dt)
       (tonumber(state.remaining) or 0) - math.max(0, tonumber(dt) or 0))
    if state.remaining > 0 then return false end
    state.remaining = nil
+   state.cooldown_total = nil
    state.phase = "ready"
    if state.destroyed then
       state.zero_shields = true
@@ -70,6 +61,7 @@ end
 function runtime.service_craft(state)
    state.phase = "ready"
    state.remaining = nil
+   state.cooldown_total = nil
    state.destroyed = nil
    state.zero_shields = nil
    if state.snapshot then

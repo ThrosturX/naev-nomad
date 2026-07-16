@@ -1,20 +1,9 @@
 package.path = "scripts/?.lua;scripts/?/init.lua;" .. package.path
-package.preload.joyride = function()
-   return {
-      swap_to_subship = function() end, end_joyride = function() end,
-      handoff_to_owned = function() end, borrow_owned = function() end,
-      begin_stored_sortie = function() end,
-      launch_owned = function() end, recall_owned = function() end,
-      takeoff = function() end,
-   }
-end
-
 local runtime = require "nomad.runtime"
 local state = runtime.initialize()
 assert(state.version == 0, "prototype state must remain at version zero")
 assert(state.carrier == nil and state.stored_ships == nil,
    "runtime state must not persist bay assignments or virtual shuttles")
-assert(runtime.joyride_available(), "the extended Joyride API must be detected")
 assert(runtime.is_carrier(true) and not runtime.is_carrier(false),
    "only the stable ship tag identifies the carrier")
 
@@ -77,9 +66,13 @@ assert(runtime.return_cooldown(100, 89, 1000) == 15,
    "depleted shields must impose the shield turnaround floor")
 assert(runtime.destroyed_cooldown(1000) == 40,
    "destroyed craft rebuilding must scale with maximum armour")
-local cooling = { phase = "cooldown", remaining = 1, destroyed = true }
+local cooling = {
+   phase = "cooldown", remaining = 1, cooldown_total = 10,
+   destroyed = true,
+}
 assert(runtime.tick_cooldown(cooling, 1)
-   and cooling.phase == "ready" and cooling.zero_shields == true,
+   and cooling.phase == "ready" and cooling.zero_shields == true
+   and cooling.cooldown_total == nil,
    "destroyed replacements must unlock with zero shields")
 
 print("ok - nomad runtime state")

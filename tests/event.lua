@@ -7,6 +7,7 @@ local end_joyride_call
 local command_launch_call
 local command_launch_failure
 local live_pilots = {}
+local applied_health = {}
 package.preload.joyride = function()
    return {
       swap_to_subship = function(carrier, template, acquired, profile)
@@ -41,7 +42,7 @@ package.preload.joyride = function()
          }
          return true
       end,
-      begin_stored_sortie = function(mothership, profile, position, direction)
+      begin_stored_owned_sortie = function(mothership, profile, position, direction)
          borrow_call = {
             name = player.ship(), profile = profile,
             mothership = mothership,
@@ -49,7 +50,7 @@ package.preload.joyride = function()
          }
          naev.cache().joyride = {
             profile = profile, mothership = mothership,
-            controlled = player.ship(), kind = "virtual",
+            controlled = player.ship(), kind = "owned",
          }
          return true
       end,
@@ -257,8 +258,10 @@ local refunded_credits = 0
 local removed_ship
 local last_player_message
 local scheduled_timers = {}
+local pilot_hook_callbacks = {}
 local teleport_call
 local current_system_name = "Test & System"
+local player_x, player_y = 321.25, -654.5
 mem = {}
 local current_pilot = {
    ship = function()
@@ -319,7 +322,7 @@ local current_pilot = {
    end,
    pos = function()
       return {
-         get = function() return 321.25, -654.5 end,
+         get = function() return player_x, player_y end,
          dist = function() return 0 end,
       }
    end,
@@ -329,6 +332,8 @@ local current_pilot = {
    dir = function() return 0 end,
    health = function() return 100, shield end,
    energy = function() return 100 end,
+   cargoList = function() return {} end,
+   weapsetList = function() return {} end,
    stats = function() return {
       shield = shield_capacity, armour = 100, fuel = 100,
    } end,
@@ -511,10 +516,12 @@ pilot = {
       end
       return result
    end,
-   add = function(_ship, _faction, _position, name)
+   add = function(_ship, _faction, spawn_position, name)
       local exists = true
       local leader
-      local position = { dist = function() return 0 end }
+      local direction = 0
+      local position = spawn_position
+      if not position.dist then position.dist = function() return 0 end end
       local candidate = {
          name = function() return name end,
          exists = function() return exists end,
@@ -528,7 +535,13 @@ pilot = {
          setNoClear = function() end,
          setFriendly = function() end,
          setInvincPlayer = function() end,
-         setHealth = function() end,
+         setDir = function(_, value) direction = value end,
+         dir = function() return direction end,
+         setHealth = function(_, armour, shield_value, stress)
+            applied_health[#applied_health + 1] = {
+               armour = armour, shield = shield_value, stress = stress,
+            }
+         end,
          setEnergy = function() end,
          setFuel = function() end,
          fillAmmo = function() end,
@@ -567,7 +580,12 @@ hook = {
          delay = delay, name = name, arguments = { ... },
       }
    end,
-   pilot = function() end,
+   pilot = function(_pilot, event, callback)
+      pilot_hook_callbacks[#pilot_hook_callbacks + 1] = {
+         event = event, callback = callback,
+      }
+      return #pilot_hook_callbacks
+   end,
    custom = function(name, callback) registered[name] = callback end,
 }
 evt = { save = function(saved) registered.saved = saved end }
@@ -673,14 +691,67 @@ nomad_update(0.1)
 assert(not live_pilots[1]:exists()
    and mem.nomad.crafts.Needle.phase == "cooldown",
    "the copy must disappear only after reaching docking distance")
-mem.nomad.crafts.Needle.phase = "ready"
+assert(mem.nomad.crafts.Needle.serviced == true
+   and mem.nomad.crafts.Needle.destroyed == nil
+   and mem.nomad.crafts.Needle.zero_shields == nil
+   and shared_cache.nomad_bay_cooldowns[first_s].remaining > 0,
+   "an intact recall must enter visible servicing without a destroyed-craft shield override")
+local pilots_before_early_launch = #live_pilots
+nomad_bay_activated { outfit = "Small Ship Bay", id = first_s, on = true }
+assert(#live_pilots == pilots_before_early_launch
+   and mem.nomad.crafts.Needle.phase == "cooldown",
+   "an early launch attempt must not corrupt the recalled craft")
+nomad_update(100)
+assert(mem.nomad.crafts.Needle.phase == "ready"
+   and shared_cache.nomad_bay_cooldowns[first_s] == nil,
+   "completed servicing must clear the native cooldown display")
 
 nomad_bay_activated { outfit = "Small Ship Bay", id = first_s, on = true }
-nomad_hail_owned("Needle")
+assert(applied_health[#applied_health].shield == 100,
+   "an intact recalled craft must relaunch with serviced shields")
+local closes_before_hail = comm_close_calls
+local timers_before_hail = #scheduled_timers
+nomad_hail_owned(live_pilots[2], "Needle")
+assert(comm_close_calls == closes_before_hail + 1 and not swap_call
+   and #scheduled_timers == timers_before_hail + 1
+   and scheduled_timers[#scheduled_timers].name == "nomad_begin_owned_joyride",
+   "hailing a bay craft must close the stock escort comm before deferring the swap")
+nomad_begin_owned_joyride()
 assert(swap_call and swap_call.template == live_pilots[2]
    and not live_pilots[2]:exists()
    and mem.nomad.active_kind == "virtual",
    "hailing a launched carried pilot must transfer control through Joyride")
+end_joyride_call = nil
+current_hull = "Hyena"
+current_size = 1
+player_x, player_y = 987.5, -432.25
+mem.nomad.virtual_name = current_hull
+nomad_joyride_started({ client = config.joyride_client })
+mem.nomad.crafts.Needle.remaining = 7
+mem.nomad.crafts.Needle.cooldown_total = 10
+shared_cache.nomad_bay_cooldowns[first_s] = {
+   remaining = 7, total = 10,
+}
+nomad_hail_mothership()
+nomad_complete_mothership_hail()
+assert(end_joyride_call,
+   "hailing the carrier from a bay craft must begin a deferred seat transfer: "
+      .. tostring(last_player_message) .. " / "
+      .. tostring(carrier_status and carrier_status.message))
+current_hull = selected_starter.hull
+current_size = 6
+nomad_joyride_ended({ client = config.joyride_client })
+assert(mem.nomad.crafts.Needle.phase == "deployed"
+   and live_pilots[#live_pilots]:exists()
+   and live_pilots[#live_pilots]:pos().x == 987.5
+   and live_pilots[#live_pilots]:pos().y == -432.25
+   and shared_cache.nomad_bay_states[first_s] == true
+   and shared_cache.nomad_bay_cooldowns[first_s] == nil
+   and mem.nomad.crafts.Needle.remaining == nil,
+   "carrier hail must restore an AI replacement for the vacated bay craft")
+live_pilots[#live_pilots]:rm()
+mem.nomad.crafts["Parked Scout"] = nil
+player_x, player_y = 321.25, -654.5
 mem.nomad.active_kind = nil
 mem.nomad.active_sortie = nil
 mem.nomad.active_source = nil
@@ -718,7 +789,7 @@ owned_ships = {{
    },
 }}
 swap_call = nil
-nomad_hail_owned("Needle")
+nomad_hail_owned(nil, "Needle")
 assert(not borrow_call and not swap_call and comm_close_calls > 0,
    "hailing a non-Nomad native fleet pilot must not start a sortie")
 mem.nomad.active_kind = nil
@@ -798,23 +869,33 @@ local parked_record = mem.nomad.parked
 nomad_takeoff()
 assert(mem.nomad.parked == parked_record and diff_applied
    and shared_cache.joyride and mem.nomad.active_kind == "owned"
+   and mem.nomad.active_source == "bay"
+   and mem.nomad.virtual_name == nil
    and mem.nomad.active_sortie == true
    and borrow_call.mothership == selected_starter.hull
    and borrow_call.transform.pos.x == 321.25
    and borrow_call.transform.pos.y == -654.5
+   and restored_position.x == 321.25
+   and restored_position.y == -654.5
+   and restored_direction == parked_record.direction
    and scheduled_timers[#scheduled_timers].name ==
       "nomad_finish_stored_carrier_takeoff",
    "stored-ship takeoff must adopt the selection and spawn its recorded carrier")
 nomad_finish_stored_carrier_takeoff(parked_record)
-assert(not mem.nomad.parked and not diff_applied and teleport_call == nil,
-   "stable-space completion must remove the parked diff without corrective swaps")
+assert(not mem.nomad.parked and mem.nomad.departed_parking == parked_record
+   and diff_applied and teleport_call == nil,
+   "takeoff must retain the departure berth until its spob leaves Naev's active stack")
 nomad_spawn_stored_carrier()
 
 landed = true
+current_system_name = "Ordinary System"
 current_spob = { nameRaw = function() return "Ordinary Spob" end }
 nomad_landed()
-assert(not mem.nomad.parked and not diff_applied and nojump_value ~= true,
-   "non-carrier landings must re-audit against the stored carrier bays")
+nomad_remove_departed_parking()
+assert(not mem.nomad.parked and not mem.nomad.departed_parking
+   and not diff_applied and nojump_value ~= true,
+   "the first post-departure system must remove the old berth and re-audit")
+current_system_name = "Test & System"
 
 current_hull = selected_starter.hull
 current_size = 6
@@ -836,8 +917,28 @@ assert(diff_applied and mem.nomad.parked,
 landed = false
 current_spob = nil
 nomad_takeoff()
-assert(not diff_applied and not mem.nomad.parked,
-   "a zero-shield parking cycle must restore the carrier normally")
+assert(diff_applied and not mem.nomad.parked and mem.nomad.departed_parking,
+   "carrier takeoff must retain its departure berth until the first jump")
+local departed_diff_name = current_diff_name
+landed = false
+nomad_park_carrier()
+assert(diff_applied and mem.nomad.departed_parking
+   and scheduled_timers[#scheduled_timers].name == "nomad_complete_parking",
+   "reparking must keep the active-system berth intact until landing")
+nomad_complete_parking()
+assert(diff_applied and mem.nomad.parked
+   and not mem.nomad.departed_parking
+   and current_diff_name == departed_diff_name,
+   "same-system reparking must reuse the berth without stacking relocation diffs")
+landed = false
+current_spob = nil
+nomad_takeoff()
+current_system_name = "Cleanup System"
+nomad_apply_rules()
+nomad_remove_departed_parking()
+assert(not diff_applied and not mem.nomad.departed_parking,
+   "carrier departure must remove its old berth after changing systems")
+current_system_name = "Test & System"
 
 local first_diff_name = current_diff_name
 shield = 100
@@ -849,8 +950,14 @@ assert(diff_applied and mem.nomad.parked
 landed = false
 current_spob = nil
 nomad_takeoff()
-assert(not diff_applied,
-   "repeated parking must remove its own dynamic location cleanly")
+assert(diff_applied and mem.nomad.departed_parking,
+   "repeated parking must retain only its active departure berth")
+current_system_name = "Second Cleanup System"
+nomad_apply_rules()
+nomad_remove_departed_parking()
+assert(not diff_applied and not mem.nomad.departed_parking,
+   "repeated parking must remove its own location after departure")
+current_system_name = "Test & System"
 
 reject_next_diff = true
 nomad_park_carrier()
@@ -990,18 +1097,38 @@ carrier_tags = { [selected_starter.hull] = true }
 current_hull = "Alpaca"
 current_size = 2
 owned_ships = {}
+pilot_hook_callbacks = {}
 nomad_joyride_started({ client = config.joyride_client, pilot = mothership })
+for _, installed in ipairs(pilot_hook_callbacks) do
+   assert(installed.callback ~= "nomad_board_mothership",
+      "command shuttles must retain Joyride Handler's normal board callback")
+end
 end_joyride_call = nil
 last_player_message = nil
+mem.nomad.active_source = "command"
 nomad_hail_mothership()
 assert(end_joyride_call == nil
-   and last_player_message:find("must dock", 1, true),
+   and scheduled_timers[#scheduled_timers].name ==
+      "nomad_complete_mothership_hail",
+   "mothership hailing must defer the transition until comms have closed")
+nomad_complete_mothership_hail()
+assert(last_player_message:find("must dock", 1, true),
    "hailing from the command shuttle must not bypass its docking return path")
-mem.nomad.active_kind = "owned"
-nomad_hail_mothership()
-assert(end_joyride_call and end_joyride_call.redeploy_owned == nil,
-   "hailing from a bay craft must dock it instead of native redeployment")
 mem.nomad.active_kind = "virtual"
+mem.nomad.active_source = "bay"
+current_hull = "Soromid Ira"
+current_size = 5
+mem.nomad.virtual_name = current_hull
+nomad_hail_mothership()
+assert(end_joyride_call == nil,
+   "bay-craft seat transfer must not remove the hailed carrier in its hail hook")
+nomad_complete_mothership_hail()
+assert(end_joyride_call and end_joyride_call.redeploy_owned == nil,
+   "a large bay craft must not be audited as the command shuttle")
+mem.nomad.active_kind = "virtual"
+mem.nomad.active_source = nil
+current_hull = "Alpaca"
+current_size = 2
 assert(registered.joyride_mothership_restored == "nomad_mothership_restored",
    "Nomad must listen for restored mothership ownership")
 nomad_mothership_restored({
@@ -1014,6 +1141,7 @@ assert(restored_carrier_name == "Restored Carrier",
 current_hull = "Llama"
 current_size = 3
 mem.nomad.virtual_name = current_hull
+mem.nomad.active_source = "command"
 nomad_apply_rules()
 assert(nojump_value == true and nojump_marker == true,
    "an oversized command-shuttle trade must receive Nomad's no-jump marker")
@@ -1021,6 +1149,7 @@ current_size = 2
 nomad_apply_rules()
 assert(nojump_value == false and nojump_marker == nil,
    "a compatible replacement must immediately clear only Nomad's marker")
+mem.nomad.active_source = nil
 
 current_hull = selected_starter.hull
 current_size = 6
@@ -1029,5 +1158,84 @@ assert(landing_allowed == false,
    "returning from a Nomad sortie must restore the carrier landing rule")
 assert(released_mothership == config.joyride_client,
    "returning must release the commander from the mothership")
+
+local parked_scout_type = {
+   nameRaw = function() return "Hyena" end,
+   size = function() return 1 end,
+}
+current_hull = "Fresh Parked Scout (Sortie)"
+current_size = 1
+owned_ships = {{
+   name = "Fresh Parked Scout", deployed = false, ship = parked_scout_type,
+}}
+mem.nomad.crafts["Fresh Parked Scout"] = {
+   phase = "controlled",
+   snapshot = {
+      hull = "Hyena", size = 1, outfits = {}, cargo = {},
+      armour = 100, shield = 100, energy = 100,
+   },
+}
+mem.nomad.controlled_craft = "Fresh Parked Scout"
+mem.nomad.active_kind = "owned"
+mem.nomad.active_source = "bay"
+mem.nomad.parked = { carrier = selected_starter.hull }
+shared_cache.joyride = { kind = "owned" }
+player_x, player_y = 2468.5, -1357.25
+nomad_hail_mothership()
+nomad_complete_mothership_hail()
+mem.nomad.parked = nil
+current_hull = selected_starter.hull
+current_size = 6
+owned_ships = {}
+last_player_message = nil
+nomad_joyride_ended({
+   client = config.joyride_client,
+   returned_kind = "owned",
+   snapshot = mem.nomad.crafts["Fresh Parked Scout"].snapshot,
+})
+local parked_scout_bay = physical_id("XL Ship Bay", 1)
+assert(live_pilots[#live_pilots]:exists()
+   and live_pilots[#live_pilots]:name() == "Fresh Parked Scout"
+   and live_pilots[#live_pilots]:pos().x == 2468.5
+   and live_pilots[#live_pilots]:pos().y == -1357.25
+   and mem.nomad.controlled_craft == nil
+   and mem.nomad.crafts["Fresh Parked Scout"].phase == "deployed"
+   and shared_cache.nomad_bay_states[parked_scout_bay] == true
+   and shared_cache.nomad_bay_cooldowns[parked_scout_bay] == nil
+   and last_player_message == nil,
+   "parked takeoff must return through the ordinary immediate bay replacement")
+nomad_after_ownership_change(false)
+assert(mem.nomad.crafts["Fresh Parked Scout"]
+   and live_pilots[#live_pilots]:exists()
+   and shared_cache.nomad_bay_states[parked_scout_bay] == true,
+   "a queued ownership audit must retain the live bay craft and active outfit")
+owned_ships = {{
+   name = "Fresh Parked Scout", deployed = false, ship = parked_scout_type,
+}}
+nomad_after_ownership_change(false)
+assert(mem.nomad.crafts["Fresh Parked Scout"]
+   and live_pilots[#live_pilots]:exists()
+   and shared_cache.nomad_bay_states[parked_scout_bay] == true,
+   "the ordinary ownership audit must retain the restored bay pilot")
+
+-- Reproduce the complete reported sequence. Even if the preceding bay return
+-- has left its controlled-craft marker visible until its custom event finishes,
+-- command launch must identify itself before Joyride synchronously spawns the
+-- carrier. Nomad must therefore leave the normal command docking hook alone.
+command_launch_call = nil
+pilot_hook_callbacks = {}
+mem.nomad.controlled_craft = "Fresh Parked Scout"
+mem.nomad.active_source = "bay"
+shared_cache.joyride = nil
+nomad_launch_command_shuttle()
+assert(command_launch_call == config.joyride_client
+   and mem.nomad.active_source == "command",
+   "command launch after a parked bay return must declare its lifecycle before spawning")
+shared_cache.joyride = { profile = { client = config.joyride_client } }
+nomad_joyride_started({ client = config.joyride_client, pilot = mothership })
+for _, installed in ipairs(pilot_hook_callbacks) do
+   assert(installed.callback ~= "nomad_board_mothership",
+      "stale parked-return state must not replace the command shuttle docking hook")
+end
 
 print("ok - nomad event boundaries")
