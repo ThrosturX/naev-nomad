@@ -35,6 +35,10 @@ assert(descextra(player_pilot, outfit, pilot_outfit) == "Assigned: Needle (Hyena
    "an installed control must expose its runtime-only assignment tooltip")
 init(player_pilot, pilot_outfit)
 assert(states[#states] == "off", "bay controls must initialize off")
+onadd(player_pilot, pilot_outfit)
+assert(triggered.name == "nomad_bay_configuration_changed"
+   and triggered.payload.id == 7,
+   "adding a bay control must request capacity validation")
 assert(ontoggle(player_pilot, pilot_outfit, true), "bay activation must be handled")
 assert(triggered.name == "nomad_bay_activated"
    and triggered.payload.outfit == "Small Ship Bay"

@@ -31,16 +31,16 @@ config.starter_carriers = {
       name = "Muoiyja",
       acquired = "Your carrier and home among the stars.",
       credits = 20000000,
-      choice = "Soromid Arx — 20,000,000 credits and a Soromid flotilla",
-      bays = { "XL Ship Bay", "XL Ship Bay", "XL Ship Bay" },
+      choice = "Living Fleet — 20,000,000 credits",
+      bays = { "Large Ship Bay", "Large Ship Bay", "Medium Ship Bay" },
       chapter = "1",
       command_shuttle = "Soromid Brigand",
       roster = {
          {
-            hull = "Soromid Vox",
-            name = "Deep Thunder",
-            acquired = "A battleship carried by your first Nomad home.",
-            size = 6,
+            hull = "Soromid Copia",
+            name = "Deep Stores",
+            acquired = "A freighter carried by your first Nomad home.",
+            size = 4,
          },
          {
             hull = "Soromid Ira",
@@ -64,7 +64,7 @@ config.starter_carriers = {
       name = "Nevermore",
       acquired = "Your carrier and home among the stars.",
       credits = 350000,
-      choice = "Raven Clan Pirate Starbridge — 350,000 credits",
+      choice = "Raven Pirate — 350,000 credits",
       bays = { "Medium Ship Bay", "Small Ship Bay" },
       start_system = "Qorel",
       home_spob = "Qorellia",
@@ -110,15 +110,17 @@ config.general_bays = {
    ["Medium Ship Bay"] = { name = "M", max_size = config.bay_classes.M,
       outfit = "Medium Ship Bay" },
    ["Large Ship Bay"] = { name = "L", max_size = config.bay_classes.L,
-      outfit = "Large Ship Bay" },
+      outfit = "Large Ship Bay", large_bay_points = 1 },
    ["XL Ship Bay"] = { name = "XL", max_size = config.bay_classes.XL,
-      outfit = "XL Ship Bay" },
+      outfit = "XL Ship Bay", large_bay_points = 2 },
 }
+
+config.large_bay_points = 2
 
 config.bay_outfit_by_slot_size = {
    Small = "Small Ship Bay",
    Medium = "Medium Ship Bay",
-   Large = "XL Ship Bay",
+   Large = "Large Ship Bay",
 }
 
 config.starter_bays = {

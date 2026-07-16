@@ -1,5 +1,6 @@
 package.path = "scripts/?.lua;scripts/?/init.lua;" .. package.path
 local runtime = require "nomad.runtime"
+local config = require "nomad.config"
 local state = runtime.initialize()
 assert(state.version == 0, "prototype state must remain at version zero")
 assert(state.carrier == nil and state.stored_ships == nil,
@@ -15,6 +16,27 @@ local configured_bays = runtime.general_bays {
 assert(#configured_bays == 2 and configured_bays[1].name == "M"
    and configured_bays[1].slot_id == 3 and configured_bays[2].name == "S",
    "general bays must be derived from installed controls in physical slot order")
+
+local invalid = runtime.invalid_bay_slots {
+   { id = 1, outfit = "Large Ship Bay" },
+   { id = 2, outfit = "Large Ship Bay" },
+   { id = 3, outfit = "XL Ship Bay" },
+   { id = 4, outfit = config.operational_core },
+}
+assert(#invalid == 1 and invalid[1].id == 3,
+   "two L bays must consume the entire large-bay budget")
+invalid = runtime.invalid_bay_slots {
+   { id = 1, outfit = "XL Ship Bay" },
+   { id = 2, outfit = "Large Ship Bay" },
+   { id = 3, outfit = config.operational_core },
+}
+assert(#invalid == 1 and invalid[1].id == 2,
+   "one XL bay must consume the entire large-bay budget")
+invalid = runtime.invalid_bay_slots {
+   { id = 1, outfit = "Large Ship Bay" },
+}
+assert(#invalid == 1 and invalid[1].id == 1,
+   "L and XL bays must require the operational core")
 
 local assignments, violations = runtime.audit_fleet({
    { hull = "Admonisher", size = 4 }, { hull = "Shark", size = 2 },

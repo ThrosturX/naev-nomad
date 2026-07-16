@@ -3,7 +3,7 @@ local policy = {}
 local slot_bay_classes = {
    Small = { name = "Small", max_size = 2 },
    Medium = { name = "Medium", max_size = 4 },
-   Large = { name = "XL", max_size = 6 },
+   Large = { name = "L", max_size = 5 },
 }
 
 local function copy_bays(bays)
@@ -111,16 +111,19 @@ end
 
 function policy.bays_from_slots(slots)
    local bays = {}
+   local large_bays = 0
    for index, slot in ipairs(slots or {}) do
       local class = slot_bay_classes[slot.size]
       if slot.type == "Weapon" and slot.property == "fighter_bay"
-         and not slot.locked and class then
+         and not slot.locked and class
+         and (slot.size ~= "Large" or large_bays < 2) then
          bays[#bays + 1] = {
             name = class.name,
             max_size = class.max_size,
             slot_id = slot.id or index,
             slot_size = slot.size,
          }
+         if slot.size == "Large" then large_bays = large_bays + 1 end
       end
    end
    return bays

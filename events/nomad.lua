@@ -216,9 +216,7 @@ stored_carrier_bays = function(name)
    for index, installed in ipairs(player.shipOutfits(name) or {}) do
       local outfit_name = type(installed) == "string"
          and installed or installed:nameRaw()
-      if config.general_bays[outfit_name] then
-         slots[#slots + 1] = { id = index, outfit = outfit_name }
-      end
+      slots[#slots + 1] = { id = index, outfit = outfit_name }
    end
    return runtime.general_bays(slots)
 end
@@ -371,7 +369,7 @@ end
 
 local function apply_rules(show_message)
    apply_carrier_rules()
-   local _, violations = audit_now()
+   local _assignments, violations = audit_now()
    apply_nojump(violations)
    apply_mothership_access(violations)
    if show_message and #violations > 0 then
@@ -438,22 +436,7 @@ local function fit_carrier_systems()
    local pilot = player.pilot()
    local slots = pilot:ship():getSlots()
 
-   for index, slot in ipairs(slots) do
-      local bay_outfit = config.bay_outfit_by_slot_size[slot.size]
-      if slot.type == "Weapon" and slot.property == "fighter_bay"
-         and not slot.locked and bay_outfit then
-         local id = slot.id or index
-         local installed = pilot:outfits()[id]
-         if installed and installed:nameRaw() ~= bay_outfit then
-            player.outfitAdd(installed:nameRaw(), 1)
-            pilot:outfitRmSlot(id)
-         end
-         if not pilot:outfits()[id] then
-            pilot:outfitAddSlot(bay_outfit, id, true, false)
-         end
-      end
-   end
-
+   carrier_conversion = true
    local allocations = retrofit.allocate(
       slots, {}, config.integrated_systems)
    for _, allocation in ipairs(allocations) do
@@ -466,6 +449,30 @@ local function fit_carrier_systems()
          pilot:outfitAddSlot(allocation.outfit, allocation.id, true, false)
       end
    end
+
+   local large_bay_points = 0
+   for index, slot in ipairs(slots) do
+      local bay_outfit = config.bay_outfit_by_slot_size[slot.size]
+      if slot.size == "Large" and large_bay_points >= config.large_bay_points then
+         bay_outfit = nil
+      end
+      if slot.type == "Weapon" and slot.property == "fighter_bay"
+         and not slot.locked then
+         local id = slot.id or index
+         local installed = pilot:outfits()[id]
+         if installed and (not bay_outfit or installed:nameRaw() ~= bay_outfit) then
+            player.outfitAdd(installed:nameRaw(), 1)
+            pilot:outfitRmSlot(id)
+         end
+         if bay_outfit and not pilot:outfits()[id] then
+            pilot:outfitAddSlot(bay_outfit, id, true, false)
+         end
+         if bay_outfit == "Large Ship Bay" then
+            large_bay_points = large_bay_points + 1
+         end
+      end
+   end
+   carrier_conversion = false
 end
 
 local function strip_nomad_carrier_systems()
@@ -780,6 +787,21 @@ function nomad_refresh_after_bay_action()
 end
 
 function nomad_refresh_bay_configuration()
+   if is_carrier(player.ship()) then
+      local pilot = player.pilot()
+      local invalid = runtime.invalid_bay_slots(physical_bay_slots(pilot))
+      if #invalid > 0 then
+         carrier_conversion = true
+         for _, slot in ipairs(invalid) do
+            local installed = pilot:outfits()[slot.id]
+            if installed and installed:nameRaw() == slot.outfit then
+               player.outfitAdd(slot.outfit, 1)
+               pilot:outfitRmSlot(slot.id)
+            end
+         end
+         carrier_conversion = false
+      end
+   end
    apply_rules(false)
 end
 

@@ -81,7 +81,7 @@ function runtime.audit_fleet(ships, bays)
    return policy.audit({ bays = bays }, ships)
 end
 
-function runtime.general_bays(physical_slots)
+local function sorted_bay_slots(physical_slots)
    local sorted = {}
    for _, slot in pairs(physical_slots or {}) do
       if config.general_bays[slot.outfit] then
@@ -89,16 +89,46 @@ function runtime.general_bays(physical_slots)
       end
    end
    table.sort(sorted, function(left, right) return left.id < right.id end)
+   return sorted
+end
+
+function runtime.invalid_bay_slots(physical_slots)
+   local core_installed = false
+   for _, slot in pairs(physical_slots or {}) do
+      if slot.outfit == config.operational_core then core_installed = true end
+   end
+
+   local invalid = {}
+   local points = 0
+   for _, slot in ipairs(sorted_bay_slots(physical_slots)) do
+      local cost = config.general_bays[slot.outfit].large_bay_points or 0
+      if cost > 0 and (not core_installed
+         or points + cost > config.large_bay_points) then
+         invalid[#invalid + 1] = slot
+      else
+         points = points + cost
+      end
+   end
+   return invalid
+end
+
+function runtime.general_bays(physical_slots)
+   local invalid = {}
+   for _, slot in ipairs(runtime.invalid_bay_slots(physical_slots)) do
+      invalid[slot.id] = true
+   end
 
    local bays = {}
-   for _, slot in ipairs(sorted) do
-      local source = config.general_bays[slot.outfit]
-      bays[#bays + 1] = {
-         name = source.name,
-         max_size = source.max_size,
-         outfit = source.outfit,
-         slot_id = slot.id,
-      }
+   for _, slot in ipairs(sorted_bay_slots(physical_slots)) do
+      if not invalid[slot.id] then
+         local source = config.general_bays[slot.outfit]
+         bays[#bays + 1] = {
+            name = source.name,
+            max_size = source.max_size,
+            outfit = source.outfit,
+            slot_id = slot.id,
+         }
+      end
    end
    return bays
 end

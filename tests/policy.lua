@@ -70,8 +70,16 @@ local candidate_bays = policy.bays_from_slots({
 })
 assert(#candidate_bays == 3 and candidate_bays[1].max_size == 2
    and candidate_bays[2].max_size == 4
-   and candidate_bays[3].max_size == 6,
-   "candidate carrier capacity must derive from unlocked fighter-bay slots")
+   and candidate_bays[3].max_size == 5,
+   "candidate carrier capacity must default large fighter-bay slots to L bays")
+candidate_bays = policy.bays_from_slots({
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay" },
+   { id = 2, type = "Weapon", size = "Large", property = "fighter_bay" },
+   { id = 3, type = "Weapon", size = "Large", property = "fighter_bay" },
+})
+assert(#candidate_bays == 2 and candidate_bays[1].max_size == 5
+   and candidate_bays[2].max_size == 5,
+   "candidate carriers must expose at most the two default L bays")
 
 local incumbent = { id = "old", name = "Old Carrier", size = 3,
    bays = { { name = "S", max_size = 2 } } }
@@ -110,6 +118,10 @@ assert(#usage == 4 and usage[1].ship.name == "XL"
    "bay usage must be reportable without persisting assignments")
 
 local arx = config.starter_carriers[2]
+assert(arx.bays[1] == "Large Ship Bay" and arx.bays[2] == "Large Ship Bay"
+   and arx.bays[3] == "Medium Ship Bay"
+   and arx.roster[1].hull == "Soromid Copia",
+   "the Arx start must use its intended two-L-and-one-M configuration")
 local arx_bays = {}
 for _, outfit_name in ipairs(arx.bays) do
    arx_bays[#arx_bays + 1] = {

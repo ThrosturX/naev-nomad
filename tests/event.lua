@@ -1052,6 +1052,37 @@ nomad_joyride_started({ client = config.joyride_client, pilot = mothership })
 assert(attached_mothership.client == config.joyride_client
    and attached_mothership.mothership == mothership,
    "Nomad sorties must attach the commander to the mothership")
+mem.nomad.active_source = "command"
+owned_ships = {{
+   name = selected_starter.hull, deployed = false,
+   ship = {
+      nameRaw = function() return selected_starter.hull end,
+      size = function() return 3 end,
+   },
+}}
+local traded_reaver = {
+   nameRaw = function() return "Soromid Reaver" end,
+   size = function() return 2 end,
+}
+current_hull = "Purchased Reaver"
+current_size = 2
+carrier_status = nil
+nomad_ship_acquired(traded_reaver, true)
+assert(mem.nomad.virtual_name == "Purchased Reaver"
+   and mothership_boardable == true and carrier_status == nil,
+   "a legal traded command shuttle must remain returnable to its mothership")
+local oversized_trade = {
+   nameRaw = function() return "Oversized Shuttle" end,
+   size = function() return 3 end,
+}
+current_hull = "Oversized Shuttle"
+current_size = 3
+nomad_ship_acquired(oversized_trade, true)
+assert(carrier_status and carrier_status.title == "No Compatible Bay",
+   "an oversized traded shuttle must report its violation without breaking acquisition hooks")
+current_hull = "Alpaca"
+current_size = 2
+mem.nomad.virtual_name = current_hull
 owned_ships = {
    {
       name = selected_starter.hull, deployed = false,
@@ -1127,8 +1158,8 @@ installed_outfits = {
 nomad_joyride_ended({ client = config.joyride_client })
 assert(current_hull == "Hephaestus" and carrier_tags.Hephaestus == true
    and carrier_tags[selected_starter.hull] == nil
-   and installed_outfits[1] == "XL Ship Bay"
-   and installed_outfits[2] == "XL Ship Bay"
+   and installed_outfits[1] == "Large Ship Bay"
+   and installed_outfits[2] == "Large Ship Bay"
    and installed_outfits[3] == config.shuttle_bay
    and installed_outfits[4] == config.operational_core
    and refunded_credits == 900000,
@@ -1229,7 +1260,7 @@ nomad_joyride_ended({
    returned_kind = "owned",
    snapshot = mem.nomad.crafts["Fresh Parked Scout"].snapshot,
 })
-local parked_scout_bay = physical_id("XL Ship Bay", 1)
+local parked_scout_bay = physical_id("Large Ship Bay", 1)
 assert(live_pilots[#live_pilots]:exists()
    and live_pilots[#live_pilots]:name() == "Fresh Parked Scout"
    and live_pilots[#live_pilots]:pos().x == 2468.5

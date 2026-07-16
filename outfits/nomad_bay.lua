@@ -62,6 +62,13 @@ function update(subject, pilot_outfit)
    apply_state(pilot_outfit)
 end
 
+function onadd(subject, pilot_outfit)
+   if not is_player(subject) then return end
+   naev.trigger("nomad_bay_configuration_changed", {
+      id = pilot_outfit:id(),
+   })
+end
+
 function onremove(subject, pilot_outfit)
    if not is_player(subject) then return end
    local assignments = naev.cache().nomad_bay_assignments or {}
