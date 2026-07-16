@@ -1,6 +1,6 @@
 .PHONY: check syntax manifest test
 
-LUA_FILES := $(shell find events outfits scripts tests -type f -name '*.lua' -print)
+LUA_FILES := $(shell find events outfits scripts spob tests -type f -name '*.lua' -print)
 
 check: syntax manifest test
 

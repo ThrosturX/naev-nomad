@@ -1,0 +1,23 @@
+<ssys name="NGC-2601">
+ <general>
+  <background>blackhole</background>
+  <radius>15000</radius>
+  <spacedust>400</spacedust>
+  <interference>0</interference>
+  <nolanes/>
+ </general>
+ <pos x="-1701.351284" y="-471.375407"/>
+ <spobs/>
+ <jumps>
+  <jump target="NGC-1562">
+   <autopos/>
+   <hide>1</hide>
+  </jump>
+  <jump target="NGC-N0M4D">
+   <autopos/>
+   <hidden/>
+   <exitonly/>
+   <hide>1</hide>
+  </jump>
+ </jumps>
+</ssys>

@@ -36,6 +36,26 @@ assert(parked:find("<land/>", 1, true)
    and parked:find("<space>nomad_invisible</space>", 1, true),
    "the parked carrier must provide services with its transparent marker")
 
+local storage = read_file("ssys/ngc_nomad.xml")
+local ngc2601 = read_file("ssys/ngc2601.xml")
+local storage_wormhole = read_file("spob/nomad_storage_wormhole.xml")
+local storage_wormhole_lua = read_file(
+   "spob/lua/nomad_storage_wormhole.lua")
+assert(config.parking.storage_system == "NGC-N0M4D"
+   and storage:find('<ssys name="NGC-N0M4D">', 1, true)
+   and storage:find('<pos x="-1709.736566" y="-389.2039425"/>', 1, true),
+   "carrier storage must remain hidden between Zied and NGC-2601")
+assert(storage:find('<jump target="NGC-2601">', 1, true)
+   and storage:find("<hidden/>", 1, true)
+   and ngc2601:find('<jump target="NGC-N0M4D">', 1, true)
+   and ngc2601:find("<exitonly/>", 1, true),
+   "carrier storage must have a hidden one-way path to NGC-2601")
+assert(storage:find("<spob>Nomad Storage Wormhole</spob>", 1, true)
+   and storage_wormhole:find("<tag>wormhole</tag>", 1, true)
+   and storage_wormhole_lua:find("spob.getAll()", 1, true)
+   and storage_wormhole_lua:find("candidate:tags().wormhole", 1, true),
+   "carrier storage must retain its random wormhole exit")
+
 local core = read_file("outfits/nomadic_operational_core.xml")
 local shuttle = read_file("outfits/shuttle_bay.xml")
 local small_bay = read_file("outfits/nomad_s_bay.xml")

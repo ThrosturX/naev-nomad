@@ -139,7 +139,7 @@ config.parking = {
    diff = "Nomad Parked Carrier Location",
    spob = "Nomad Parked Carrier",
    stop_speed = 5,
-   storage_system = "Nomad Carrier Storage",
+   storage_system = "NGC-N0M4D",
    minimum_shield = 90,
 }
 config.starter_subship = {

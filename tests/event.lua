@@ -86,9 +86,10 @@ package.preload.format = function()
    }
 end
 local toolkit_open = false
+local starting_choice = 1
 tk = {
    msg = function() end,
-   choice = function() return 1 end,
+   choice = function() return starting_choice end,
    yesno = function() return true end,
    isOpen = function() return toolkit_open end,
 }
@@ -136,6 +137,14 @@ local start_vars = {}
 local carrier_tag
 local starting_bays = {}
 local starting_install_attempts = {}
+local starting_integrated = {}
+local starting_slot_outfits = {}
+local starting_slots = {
+   { id = 3, type = "Utility", size = "Medium", property = "systems" },
+   { id = 4, type = "Utility", size = "Medium", property = "accessory" },
+   { id = 5, type = "Utility", size = "Medium" },
+   { id = 6, type = "Utility", size = "Medium" },
+}
 local starting_inventory = {}
 local starting_ship_add
 local starting_ship_swap
@@ -190,6 +199,25 @@ player = {
             starting_bays[#starting_bays + 1] = what
             return 1
          end,
+         ship = function()
+            return {
+               getSlots = function() return starting_slots end,
+            }
+         end,
+         outfits = function() return starting_slot_outfits end,
+         outfitAddSlot = function(_, what, id, bypass_cpu, bypass_slot)
+            starting_integrated[#starting_integrated + 1] = {
+               outfit = what, id = id, bypass_cpu = bypass_cpu,
+               bypass_slot = bypass_slot,
+            }
+            starting_slot_outfits[id] = {
+               nameRaw = function() return what end,
+            }
+            return true
+         end,
+         outfitRmSlot = function(_, id)
+            starting_slot_outfits[id] = nil
+         end,
       }
    end,
 }
@@ -217,16 +245,39 @@ assert(starting_ship_swap.name == selected_starter.name
    "Nomad start must atomically replace the temporary bootstrap hull")
 assert(starting_credits == selected_starter.credits and starting_payment == 0,
    "Nomad start must apply the selected carrier's exact starting funds")
-assert(#starting_install_attempts == 4 and #starting_bays == 3
+assert(#starting_install_attempts == 3 and #starting_bays == 2
    and starting_bays[1] == "Medium Ship Bay"
-   and starting_bays[2] == config.operational_core
-   and starting_bays[3] == config.shuttle_bay,
-   "Nomad start must install its bays and integrated systems once")
+   and starting_bays[2] == config.shuttle_bay
+   and #starting_integrated == 1
+   and starting_integrated[1].outfit == config.operational_core
+   and starting_integrated[1].id == 5
+   and starting_integrated[1].bypass_cpu == true
+   and starting_integrated[1].bypass_slot == true,
+   "Nomad start must force the Core into the first largest utility slot")
 for name, quantity in pairs(config.spare_bays) do
    local failed_starter = name == "Small Ship Bay" and 1 or 0
    assert(starting_inventory[name] == quantity + failed_starter,
       "new Nomad pilots must receive every configured spare bay control")
 end
+
+starting_choice = 2
+starting_slots = {
+   { id = 6, type = "Utility", size = "Large",
+      property = "bio_systems" },
+   { id = 10, type = "Utility", size = "Large",
+      property = "accessory" },
+   { id = 11, type = "Utility", size = "Large" },
+   { id = 12, type = "Utility", size = "Large" },
+   { id = 13, type = "Utility", size = "Medium" },
+}
+starting_integrated = {}
+starting_slot_outfits = {}
+create()
+assert(#starting_integrated == 1
+   and starting_integrated[1].outfit == config.operational_core
+   and starting_integrated[1].id == 11,
+   "the Arx start must install the Core in its first largest utility slot")
+starting_choice = 1
 local current_hull = selected_starter.hull
 local carrier_tags = { [selected_starter.hull] = true }
 local landing_allowed

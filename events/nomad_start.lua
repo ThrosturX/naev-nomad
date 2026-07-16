@@ -7,6 +7,28 @@
 
 local config = require "nomad.config"
 
+local utility_size = { Small = 1, Medium = 2, Large = 3 }
+
+local function largest_ordinary_utility(slots)
+   local selected
+   for index, slot in ipairs(slots or {}) do
+      if slot.type == "Utility"
+         and (slot.property == nil or slot.property == "")
+         and not slot.required and not slot.locked then
+         local candidate = {
+            id = slot.id or index,
+            size = utility_size[slot.size] or 0,
+         }
+         if not selected or candidate.size > selected.size
+            or (candidate.size == selected.size
+               and candidate.id < selected.id) then
+            selected = candidate
+         end
+      end
+   end
+   return selected and selected.id
+end
+
 local function apply_starting_flavour(starter)
    if starter.reputation then
       local home = faction.get(starter.reputation.faction)
@@ -52,8 +74,14 @@ function create()
          player.outfitAdd(outfit_name, 1)
       end
    end
+   local pilot = player.pilot()
+   local core_slot = largest_ordinary_utility(pilot:ship():getSlots())
+   assert(core_slot, "starter carrier has no utility slot for its Core")
+   assert(pilot:outfitAddSlot(config.operational_core, core_slot, true, true),
+      "unable to install starter carrier Operational Core")
    for _, system in ipairs(config.integrated_systems) do
-      if player.pilot():outfitAdd(system.outfit) <= 0 then
+      if system.outfit ~= config.operational_core
+         and pilot:outfitAdd(system.outfit) <= 0 then
          player.outfitAdd(system.outfit, 1)
       end
    end

@@ -5,7 +5,7 @@
   <size>large</size>
   <mass>0</mass>
   <price>0</price>
-  <gfx_store>nomad_xl_bay.avif</gfx_store>
+  <gfx_store>xlarge_ship_bay.avif</gfx_store>
   <description>Launches or recalls the extra-large ship assigned to this carrier bay.</description>
  </general>
  <specific type="modification">
