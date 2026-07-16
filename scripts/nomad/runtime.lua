@@ -16,8 +16,69 @@ function runtime.joyride_available()
       and type(joyride.end_joyride) == "function"
       and type(joyride.handoff_to_owned) == "function"
       and type(joyride.borrow_owned) == "function"
-      and type(joyride.launch_owned) == "function"
-      and type(joyride.recall_owned) == "function"
+      and type(joyride.begin_stored_sortie) == "function"
+      and type(joyride.takeoff) == "function"
+end
+
+function runtime.craft_state(saved, name)
+   saved.crafts = saved.crafts or {}
+   local state = saved.crafts[name]
+   if type(state) ~= "table" then
+      state = { phase = "ready" }
+      saved.crafts[name] = state
+   end
+   state.phase = state.phase or "ready"
+   return state
+end
+
+function runtime.return_cooldown(armour_percent, shield_percent, armour_max)
+   local lost = math.max(0, tonumber(armour_max) or 0)
+      * math.max(0, 100 - (tonumber(armour_percent) or 100)) / 100
+   local seconds = math.max(10, lost / 25)
+   if (tonumber(shield_percent) or 100) < 90 then
+      seconds = math.max(seconds, 15)
+   end
+   return seconds
+end
+
+function runtime.destroyed_cooldown(armour_max)
+   return math.max(10, math.max(0, tonumber(armour_max) or 0) / 25)
+end
+
+function runtime.tick_cooldown(state, dt)
+   if not state or state.phase ~= "cooldown" then return false end
+   state.remaining = math.max(0,
+      (tonumber(state.remaining) or 0) - math.max(0, tonumber(dt) or 0))
+   if state.remaining > 0 then return false end
+   state.remaining = nil
+   state.phase = "ready"
+   if state.destroyed then
+      state.zero_shields = true
+      state.destroyed = nil
+   else
+      if state.snapshot then
+         state.snapshot.armour = 100
+         state.snapshot.shield = 100
+         state.snapshot.stress = 0
+         state.snapshot.energy = 100
+      end
+      state.serviced = true
+   end
+   return true
+end
+
+function runtime.service_craft(state)
+   state.phase = "ready"
+   state.remaining = nil
+   state.destroyed = nil
+   state.zero_shields = nil
+   if state.snapshot then
+      state.snapshot.armour = 100
+      state.snapshot.shield = 100
+      state.snapshot.stress = 0
+      state.snapshot.energy = 100
+   end
+   state.serviced = true
 end
 
 function runtime.is_carrier(tagged)
@@ -54,6 +115,16 @@ function runtime.audit_command_shuttle(shuttle)
    return policy.can_use_command_bay(config.command_bay, shuttle)
 end
 
+function runtime.carrier_bays(slots)
+   return policy.bays_from_slots(slots)
+end
+
+function runtime.acquisition_decision(incumbent, stored_ships, candidate,
+      candidate_carrier)
+   return policy.acquisition_decision(
+      incumbent, stored_ships, candidate, candidate_carrier)
+end
+
 function runtime.violation_message(violation)
    local candidate = violation and violation.ship or {}
    local hull = candidate.hull or candidate.name or "Unknown hull"
@@ -83,9 +154,10 @@ function runtime.map_bay_slots(bays, physical_slots)
    return mapped
 end
 
-function runtime.bay_tooltip(ship)
+function runtime.bay_tooltip(ship, craft)
    if not ship then return "Empty" end
-   local state = ship.deployed and "Deployed" or "Assigned"
+   local state = craft and craft.phase or (ship.deployed and "deployed" or "assigned")
+   state = state:gsub("^%l", string.upper)
    return string.format("%s: %s (%s)", state, ship.name, ship.hull)
 end
 

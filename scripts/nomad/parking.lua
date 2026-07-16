@@ -11,17 +11,18 @@ local function xml_escape(value)
       :gsub("'", "&apos;")
 end
 
-function parking.record(system_name, x, y, direction, diff_name)
+function parking.record(system_name, x, y, direction, diff_name, carrier_name)
    return {
       system = tostring(system_name),
       x = assert(tonumber(x), "parking x coordinate is required"),
       y = assert(tonumber(y), "parking y coordinate is required"),
       direction = tonumber(direction) or 0,
       diff = assert(diff_name, "parking diff name is required"),
+      carrier = assert(carrier_name, "parked carrier name is required"),
    }
 end
 
-function parking.validate(aboard_carrier, landed, shield)
+function parking.validate(aboard_carrier, landed, shield, shield_capacity)
    if not aboard_carrier then
       return false, "you must be aboard the Nomad carrier"
    end
@@ -29,6 +30,7 @@ function parking.validate(aboard_carrier, landed, shield)
    if type(shield) ~= "number" then
       return false, "carrier shield status is unavailable"
    end
+   if shield_capacity == 0 then return true end
    if shield < config.parking.minimum_shield then
       return false, string.format("carrier shields must be at least %d%%",
          config.parking.minimum_shield)

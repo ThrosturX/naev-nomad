@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<outfit name="Nomad S Bay">
+<outfit name="Small Ship Bay">
  <general>
   <slot prop="fighter_bay">weapon</slot>
   <size>small</size>
   <mass>0</mass>
   <price>0</price>
-  <gfx_store>placeholder</gfx_store>
+  <gfx_store>nomad_s_bay.avif</gfx_store>
   <description>Launches or recalls the small ship assigned to this carrier bay.</description>
  </general>
  <specific type="modification">

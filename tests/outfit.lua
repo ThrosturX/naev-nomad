@@ -17,7 +17,7 @@ naev = {
 _ = function(text) return text end
 player = { outfitNum = function() return 2 end }
 
-local outfit = { nameRaw = function() return "Nomad S Bay" end }
+local outfit = { nameRaw = function() return "Small Ship Bay" end }
 local pilot_outfit = {
    id = function() return 7 end,
    outfit = function() return outfit end,
@@ -31,11 +31,17 @@ init(nil, pilot_outfit)
 assert(states[#states] == "off", "bay controls must initialize off")
 assert(ontoggle(nil, pilot_outfit, true), "bay activation must be handled")
 assert(triggered.name == "nomad_bay_activated"
-   and triggered.payload.outfit == "Nomad S Bay"
-   and triggered.payload.id == 7,
-   "bay activation must emit raw outfit name and physical slot ID")
-assert(states[#states] == "off",
-   "a one-shot activation must leave its outfit toggled off")
+   and triggered.payload.outfit == "Small Ship Bay"
+   and triggered.payload.id == 7 and triggered.payload.on == true,
+   "bay activation must emit its slot and requested state")
+assert(states[#states] == "on",
+   "a deployed or returning bay control must stay toggled on")
+update(nil, pilot_outfit)
+assert(states[#states] == "on",
+   "the physical control must follow its runtime desired state")
+assert(ontoggle(nil, pilot_outfit, false)
+   and triggered.payload.on == false and states[#states] == "off",
+   "turning the control off must request recall")
 
 onremove(nil, pilot_outfit)
 assert(triggers[#triggers - 1].name == "nomad_occupied_bay_removed"
@@ -50,5 +56,23 @@ triggers = {}
 onremove(nil, pilot_outfit)
 assert(#triggers == 1 and triggers[1].name == "nomad_bay_configuration_changed",
    "removing an empty control must remain allowed")
+
+local integrated_name = "Nomadic Operational Core"
+outfit = { nameRaw = function() return integrated_name end }
+triggers = {}
+states = {}
+dofile("outfits/nomad_integrated.lua")
+init(nil, pilot_outfit)
+assert(states[#states] == "off",
+   "integrated systems must initialize in their one-shot off state")
+ontoggle(nil, pilot_outfit, true)
+assert(triggered.name == "nomad_integrated_system_activated"
+   and triggered.payload.action == "park" and states[#states] == "off",
+   "the operational core must trigger carrier parking")
+integrated_name = "Shuttle Bay"
+ontoggle(nil, pilot_outfit, true)
+assert(triggered.name == "nomad_integrated_system_activated"
+   and triggered.payload.action == "shuttle",
+   "the shuttle bay must trigger command shuttle launch")
 
 print("ok - nomad bay outfit")

@@ -1,5 +1,11 @@
 local policy = {}
 
+local slot_bay_classes = {
+   Small = { name = "Small", max_size = 2 },
+   Medium = { name = "Medium", max_size = 4 },
+   Large = { name = "XL", max_size = 6 },
+}
+
 local function copy_bays(bays)
    local copy = {}
    for index, bay in ipairs(bays or {}) do
@@ -101,6 +107,64 @@ function policy.can_use_command_bay(command_bay, candidate)
       return false, "the command shuttle is too large for its dedicated bay"
    end
    return true
+end
+
+function policy.bays_from_slots(slots)
+   local bays = {}
+   for index, slot in ipairs(slots or {}) do
+      local class = slot_bay_classes[slot.size]
+      if slot.type == "Weapon" and slot.property == "fighter_bay"
+         and not slot.locked and class then
+         bays[#bays + 1] = {
+            name = class.name,
+            max_size = class.max_size,
+            slot_id = slot.id or index,
+            slot_size = slot.size,
+         }
+      end
+   end
+   return bays
+end
+
+local function fleet_fits(carrier, ships)
+   local assignments, violations = policy.audit(carrier, ships)
+   return #violations == 0 and #assignments == #ships, violations
+end
+
+function policy.acquisition_decision(incumbent, stored_ships, candidate,
+      candidate_carrier)
+   local stored, without_candidate = {}, {}
+   for _, ship in ipairs(stored_ships or {}) do
+      if ship ~= candidate then
+         stored[#stored + 1] = ship
+         without_candidate[#without_candidate + 1] = ship
+      end
+   end
+
+   local can_store, store_reason = policy.can_store(
+      incumbent, stored, candidate)
+   if can_store then return { action = "store" } end
+
+   if candidate_carrier and type(candidate_carrier.bays) == "table"
+      and #candidate_carrier.bays > 0 then
+      local with_incumbent = {}
+      for _, ship in ipairs(without_candidate) do
+         with_incumbent[#with_incumbent + 1] = ship
+      end
+      with_incumbent[#with_incumbent + 1] = incumbent
+      if fleet_fits(candidate_carrier, with_incumbent) then
+         return { action = "replace", retain_incumbent = true }
+      end
+      if fleet_fits(candidate_carrier, without_candidate) then
+         return { action = "replace", retain_incumbent = false }
+      end
+   end
+
+   return {
+      action = "refund",
+      reason = store_reason
+         or "the ship cannot be stored and cannot carry the current fleet",
+   }
 end
 
 function policy.usage(bays, assignments)

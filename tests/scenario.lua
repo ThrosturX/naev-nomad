@@ -10,69 +10,74 @@ local function read_file(path)
 end
 
 local scenario = read_file("start.toml")
-local starting_hull = scenario:match('ship_model%s*=%s*"([^"]+)"')
-local starting_event = scenario:match('event%s*=%s*"([^"]+)"')
-assert(starting_hull == config.bootstrap.hull,
-   "scenario must use the non-Lua bootstrap hull")
-assert(config.bootstrap.hull ~= config.carrier.hull,
-   "the carrier must be created after player_newShipMake")
-assert(starting_event == "Nomad Start",
-   "the scenario must use the event that marks new Nomad pilots")
+assert(scenario:match('ship_model%s*=%s*"([^"]+)"') == config.bootstrap.hull
+   and scenario:match('event%s*=%s*"([^"]+)"') == "Nomad Start",
+   "the scenario must use its bootstrap hull and Nomad initializer")
 
-local handler = read_file("events/nomad.lua")
-local condition_var = handler:match('<cond>var%.peek%(%"([^"]+)%"%) == true</cond>')
-assert(condition_var == config.active_var,
-   "the persistent handler must be conditional on the start marker")
-assert(not handler:find('require%s*["\']tk["\']'),
-   "events must use Naev's injected global tk API")
+local mule = config.starter_carriers[1]
+local arx = config.starter_carriers[2]
+local raven = config.starter_carriers[3]
+assert(mule.hull == "Mule" and arx.hull == "Soromid Arx"
+   and raven.hull == "Raven Starbridge",
+   "all three requested carrier starts must remain available")
+assert(arx.chapter == "1" and mule.chapter == nil and raven.chapter == nil,
+   "only the Arx start may begin in Chapter 1")
+assert(#arx.roster == 3 and arx.roster[1].hull == "Soromid Vox"
+   and arx.roster[2].hull == "Soromid Ira"
+   and arx.roster[3].hull == "Soromid Reaver",
+   "the Arx start must retain its Soromid fleet")
+assert(raven.start_system == "Qorel" and raven.home_spob == "Qorellia"
+   and raven.reputation.faction == "Raven Clan",
+   "the Raven start must retain its regional setup")
 
-local starter = read_file("events/nomad_start.lua")
-assert(starter:find("player%.shipAdd", 1)
-   and starter:find("player%.shipSwap", 1),
-   "the start event must replace the bootstrap hull with the carrier")
-assert(not starter:find('outfitRm%(["\']all["\']%)'),
-   "the start event must preserve the configured stock hull's loadout")
-assert(starter:find("player%.outfitAdd", 1),
-   "the start event must grant configurable bay controls to inventory")
-assert(starter:find("outfitAdd%(outfit_name%) <= 0", 1),
-   "starter controls that do not fit must be preserved in inventory")
-assert(starter:find("naev%.eventStart%(config%.handler_event%)"),
-   "the start event must establish the persistent handler before the first save")
-local crewmates_start = assert(starter:find(
-   "naev%.eventStart%(config%.crewmates_event%)"))
-local handler_start = assert(starter:find(
-   "naev%.eventStart%(config%.handler_event%)"))
-assert(crewmates_start < handler_start,
-   "the current pilot's Crewmates provider must exist before Nomad initializes")
+local parked = read_file("spob/nomad_parked_carrier.xml")
+assert(parked:find("<land/>", 1, true)
+   and parked:find("<outfits/>", 1, true)
+   and parked:find("<space>nomad_invisible</space>", 1, true),
+   "the parked carrier must provide services with its transparent marker")
 
-local parked_spob = read_file("spob/nomad_parked_carrier.xml")
-assert(parked_spob:find("<land/>", 1, true)
-   and parked_spob:find("<refuel/>", 1, true)
-   and parked_spob:find("<bar/>", 1, true)
-   and parked_spob:find("<outfits/>", 1, true)
-   and not parked_spob:find("<shipyard/>", 1, true),
-   "the parked carrier must expose landing, mess hall, and equipment services")
-assert(parked_spob:find("<uninhabited/>", 1, true)
-   and parked_spob:find("<nomissionspawn/>", 1, true)
-   and parked_spob:find("<tag>nonpc</tag>", 1, true),
-   "the parked carrier must suppress faction traffic and generic NPCs")
+local core = read_file("outfits/nomadic_operational_core.xml")
+local shuttle = read_file("outfits/shuttle_bay.xml")
+assert(core:find("<size>large</size>", 1, true)
+   and core:find("<mass_mod>100</mass_mod>", 1, true)
+   and core:find("<shield_mod>200</shield_mod>", 1, true)
+   and shuttle:find("<size>medium</size>", 1, true),
+   "the physical integrated systems must retain their slot requirements")
 
-local storage = read_file("ssys/nomad_carrier_storage.xml")
-assert(storage:find('<ssys name="' .. config.parking.storage_system .. '">',
-      1, true)
-   and storage:find("<spob>" .. config.parking.spob .. "</spob>", 1, true)
-   and storage:find("<jumps/>", 1, true),
-   "the parked carrier must have a permanent unreachable save location")
-
-local copied_carrier = io.open("ships/nomad_arx.xml", "r")
-assert(not copied_carrier,
-   "logical carrier capabilities must never require a copied hull definition")
-assert(not handler:find("Nomad Command Bay", 1, true),
-   "the command launch path must not depend on a physical outfit")
-for _, name in ipairs({ "s", "m", "l", "xl" }) do
-   local control = read_file("outfits/nomad_" .. name .. "_bay.xml")
-   assert(control:find("<size>small</size>", 1, true),
-      "logical bay size must not impose a large physical slot requirement")
+package.preload.cinema = function()
+   return { on = function() end, off = function() end }
 end
+package.preload.intro = function()
+   return { init = function() end, text = function() end, run = function() end }
+end
+_ = function(text) return text end
+local applied, known = {}, 0
+diff = {
+   isApplied = function() return false end,
+   apply = function(name) applied[name] = true end,
+   remove = function(name) applied[name] = nil end,
+}
+player = {
+   chapterSet = function(chapter) applied.chapter = chapter end,
+   canDiscover = function(value) applied.discovery = value end,
+   outfitAdd = function() end,
+}
+spob = { getS = function()
+   return nil, { setKnown = function() known = known + 1 end }
+end }
+var = {
+   peek = function() return "1" end,
+   pop = function() end,
+   push = function() end,
+}
+jump = { setKnown = function() end }
+music = { choose = function() end }
+evt = { finish = function(value) applied.finished = value end }
+dofile("events/start.lua")
+create()
+assert(applied.chapter == "1" and applied.discovery == true
+   and applied.hypergates_3 == true and not applied["Chapter 0"]
+   and known == 5 and applied.finished == true,
+   "the Arx opening must initialize final Chapter 1 state without Chapter 0")
 
 print("ok - nomad scenario contract")

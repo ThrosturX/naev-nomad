@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<outfit name="Shuttle Bay">
+ <general>
+  <unique/>
+  <typename>Nomad Integrated System</typename>
+  <slot>utility</slot>
+  <size>medium</size>
+  <mass>200</mass>
+  <price>0</price>
+  <gfx_store>nomad_s_bay.avif</gfx_store>
+  <description>An integrated bay for launching the Nomad commander's shuttle.</description>
+ </general>
+ <specific type="modification">
+  <lua>outfits/nomad_integrated.lua</lua>
+ </specific>
+</outfit>

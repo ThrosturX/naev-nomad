@@ -3,7 +3,7 @@
  <display>Parked Nomad Carrier</display>
  <pos x="0" y="0"/>
  <GFX>
-  <space>station-fleetbase2</space>
+  <space>nomad_invisible</space>
   <exterior>hangar2</exterior>
  </GFX>
  <presence>
@@ -28,10 +28,10 @@
   <bar>The carrier's mess hall is the heart of shipboard life while the vessel is parked. Off-duty crewmates gather around its battered tables to eat, trade stories, and discuss the voyage ahead.</bar>
  </general>
  <tech>
-  <item>Nomad S Bay</item>
-  <item>Nomad M Bay</item>
-  <item>Nomad L Bay</item>
-  <item>Nomad XL Bay</item>
+  <item>Small Ship Bay</item>
+  <item>Medium Ship Bay</item>
+  <item>Large Ship Bay</item>
+  <item>XL Ship Bay</item>
  </tech>
  <tags>
   <tag>station</tag>
