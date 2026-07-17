@@ -164,6 +164,12 @@ package.preload["crewmates.api"] = function()
 end
 
 local config = require "nomad.config"
+local configured_core_outfits = {}
+for _starter_index, starter in ipairs(config.starter_carriers) do
+   for _core_index, core in ipairs(starter.core_outfits or {}) do
+      configured_core_outfits[core.name] = true
+   end
+end
 
 -- Starter flavour is configuration, not part of the Core-installation
 -- contract exercised below. Accept any configured faction, spob, jump, or
@@ -203,7 +209,6 @@ local start_vars = {}
 local carrier_tag
 local starting_bays = {}
 local starting_install_attempts = {}
-local starting_core_outfits = {}
 local starting_generator_fits = true
 local starting_integrated = {}
 local starting_slot_outfits = {}
@@ -212,6 +217,12 @@ local starting_slots = {
    { id = 4, type = "Utility", size = "Medium", property = "accessory" },
    { id = 5, type = "Utility", size = "Medium" },
    { id = 6, type = "Utility", size = "Medium" },
+   { id = 10, type = "Utility", size = "Medium" },
+   { id = 7, type = "Structure", size = "Large", property = "engines" },
+   { id = 8, type = "Structure", size = "Large",
+      property = "engines_secondary" },
+   { id = 9, type = "Structure", size = "Large" },
+   { id = 11, type = "Structure", size = "Large" },
 }
 local starting_inventory = {}
 local starting_ship_add
@@ -243,6 +254,15 @@ player = {
       starting_credits = starting_credits + amount
    end,
    shipAdd = function(hull, name, acquired, noname)
+      starting_slot_outfits = {}
+      for _slot_index, slot in ipairs(starting_slots) do
+         if slot.property and (slot.property:match("^systems")
+            or slot.property:match("^engines")) then
+            starting_slot_outfits[slot.id] = {
+               nameRaw = function() return "Default Core" end,
+            }
+         end
+      end
       starting_ship_add = {
          hull = hull, name = name, acquired = acquired, noname = noname,
       }
@@ -261,21 +281,21 @@ player = {
       starting_inventory[name] = (starting_inventory[name] or 0) + (quantity or 1)
    end,
    pilot = function()
+      local function slot_id(id)
+         if type(id) ~= "string" then return id end
+         for _slot_index, slot in ipairs(starting_slots) do
+            if slot.property == id then return slot.id end
+         end
+         return id
+      end
       return {
          outfitAdd = function(_, what, quantity)
             starting_install_attempts[#starting_install_attempts + 1] = what
-            if what == "Melendez Buffalo Engine"
-               or what == "Unicorp PT-200 Core System" then
-               quantity = quantity or 1
-               starting_core_outfits[what] =
-                  (starting_core_outfits[what] or 0) + quantity
-               return quantity
-            end
             if what == "Small Ship Bay" then return 0 end
             if what == config.wormhole_generator
                and not starting_generator_fits then return 0 end
             starting_bays[#starting_bays + 1] = what
-            return 1
+            return quantity or 1
          end,
          ship = function()
             return {
@@ -284,6 +304,22 @@ player = {
          end,
          outfits = function() return starting_slot_outfits end,
          outfitAddSlot = function(_, what, id, bypass_cpu, bypass_slot)
+            id = slot_id(id)
+            if configured_core_outfits[what] then
+               starting_slot_outfits[id] = {
+                  nameRaw = function() return what end,
+               }
+               return true
+            end
+            if what == config.shuttle_bay or what == config.wormhole_generator then
+               if what == config.wormhole_generator
+                  and not starting_generator_fits then return false end
+               starting_bays[#starting_bays + 1] = what
+               starting_slot_outfits[id] = {
+                  nameRaw = function() return what end,
+               }
+               return true
+            end
             starting_integrated[#starting_integrated + 1] = {
                outfit = what, id = id, bypass_cpu = bypass_cpu,
                bypass_slot = bypass_slot,
@@ -294,6 +330,7 @@ player = {
             return true
          end,
          outfitRmSlot = function(_, id)
+            id = slot_id(id)
             starting_slot_outfits[id] = nil
          end,
       }
@@ -326,7 +363,7 @@ assert(starting_ship_swap.name == selected_starter.name
    "Nomad start must atomically replace the temporary bootstrap hull")
 assert(starting_credits == selected_starter.credits and starting_payment == 0,
    "Nomad start must apply the selected carrier's exact starting funds")
-assert(#starting_install_attempts == 4 and #starting_bays == 3
+assert(#starting_install_attempts == 2 and #starting_bays == 3
    and starting_bays[1] == "Medium Ship Bay"
    and starting_bays[2] == config.shuttle_bay
    and starting_bays[3] == config.wormhole_generator
@@ -336,6 +373,13 @@ assert(#starting_install_attempts == 4 and #starting_bays == 3
    and starting_integrated[1].bypass_cpu == true
    and starting_integrated[1].bypass_slot == true,
    "Nomad start must force the Core into the first largest utility slot")
+assert(starting_slot_outfits[3]:nameRaw() == "Default Core"
+   and starting_slot_outfits[7]:nameRaw() == "Melendez Buffalo Engine"
+   and starting_slot_outfits[8]:nameRaw() == "Melendez Buffalo Engine",
+   "starter engine replacements must stay in the named engine slots")
+assert(starting_slot_outfits[4] == nil
+   and starting_slot_outfits[6]:nameRaw() == config.shuttle_bay,
+   "the starter Shuttle Bay must use an ordinary utility slot")
 for name, quantity in pairs(config.spare_bays) do
    local failed_starter = name == "Small Ship Bay" and 1 or 0
    assert(starting_inventory[name] == quantity + failed_starter,
@@ -354,11 +398,19 @@ starting_inventory[config.wormhole_generator] = nil
 starting_slots = {
    { id = 6, type = "Utility", size = "Large",
       property = "bio_systems" },
+   { id = 9, type = "Utility", size = "Large",
+      property = "systems_secondary" },
    { id = 10, type = "Utility", size = "Large",
       property = "accessory" },
    { id = 11, type = "Utility", size = "Large" },
    { id = 12, type = "Utility", size = "Large" },
    { id = 13, type = "Utility", size = "Medium" },
+   { id = 17, type = "Utility", size = "Medium" },
+   { id = 14, type = "Structure", size = "Large", property = "engines" },
+   { id = 15, type = "Structure", size = "Large",
+      property = "engines_secondary" },
+   { id = 16, type = "Structure", size = "Large" },
+   { id = 18, type = "Structure", size = "Large" },
 }
 local every_starter_installs_core = true
 for choice = 1, #config.starter_carriers do
@@ -377,8 +429,7 @@ assert(every_starter_installs_core,
    "every Nomad carrier start must install the Operational Core")
 faction_standings = {}
 pirate_standing_update = nil
-starting_core_outfits = {}
-starting_choice = 4
+starting_choice = 3
 create()
 assert(faction_standings.Empire == -10 and faction_standings.Dvaered == -10
    and faction_standings.Sirius == -10 and faction_standings.Soromid == -10
@@ -392,10 +443,8 @@ assert(faction_standings.Empire == -10 and faction_standings.Dvaered == -10
    and faction_standings["Black Lotus"] == 20
    and faction_standings.Proteron == nil and faction_standings.Thurion == nil
    and faction_standings.Lost == nil
-   and pirate_standing_update == 20
-   and starting_core_outfits["Melendez Buffalo Engine"] == 2
-   and starting_core_outfits["Unicorp PT-200 Core System"] == 2,
-   "the Rhino Corsair start must be spaceworthy and retain pirate standings")
+   and pirate_standing_update == 20,
+   "the Raven Rhino start must apply its configured pirate standings")
 starting_choice = 1
 local current_hull = selected_starter.hull
 local carrier_tags = { [selected_starter.hull] = true }
@@ -1734,6 +1783,49 @@ hail_timer = scheduled_timers[#scheduled_timers]
 nomad_complete_mothership_hail(hail_timer.arguments[1])
 assert(last_player_message:find("must dock", 1, true),
    "hailing from the command shuttle must not bypass its docking return path")
+
+current_hull = "Landed Ship"
+current_size = 2
+mem.nomad.active_kind = "virtual"
+mem.nomad.active_source = "command"
+mem.nomad.virtual_name = "Alpaca"
+nomad_joyride_controlled_changed {
+   client = config.joyride_client,
+   controlled = current_hull,
+}
+assert(mem.nomad.active_source == "bay"
+   and mem.nomad.active_kind == "owned"
+   and mem.nomad.virtual_name == nil
+   and mem.nomad.controlled_craft == current_hull
+   and mem.nomad.crafts[current_hull].phase == "controlled",
+   "selecting an owned ship while landed must end command-shuttle restrictions")
+
+-- Takeoff is an engine-confirmed lifecycle boundary. Recover there too if an
+-- older or interrupted session missed Joyride's controlled-change event.
+current_hull = "Recovered Ship"
+mem.nomad.active_kind = "virtual"
+mem.nomad.active_source = "command"
+mem.nomad.controlled_craft = nil
+mem.nomad.virtual_name = "Alpaca"
+shared_cache.joyride = {
+   profile = { client = config.joyride_client },
+   pilot = mothership,
+   token = 1001,
+   kind = "owned",
+   controlled = current_hull,
+}
+nomad_takeoff()
+assert(mem.nomad.active_source == "bay"
+   and mem.nomad.active_kind == "owned"
+   and mem.nomad.virtual_name == nil
+   and mem.nomad.controlled_craft == current_hull
+   and mem.nomad.crafts[current_hull].phase == "controlled",
+   "taking off in an owned ship must recover a stale command-shuttle session")
+
+-- The following cases exercise independent virtual-sortie boundaries.
+mem.nomad.controlled_craft = nil
+mem.nomad.crafts["Landed Ship"] = nil
+mem.nomad.crafts["Recovered Ship"] = nil
 mem.nomad.active_kind = "virtual"
 mem.nomad.active_source = "bay"
 current_hull = "Soromid Ira"

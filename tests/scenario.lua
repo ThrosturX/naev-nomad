@@ -16,10 +16,9 @@ assert(scenario:match('ship_model%s*=%s*"([^"]+)"') == config.bootstrap.hull
 
 local mule = config.starter_carriers[1]
 local arx = config.starter_carriers[2]
-local raven = config.starter_carriers[3]
-local rhino = config.starter_carriers[4]
+local rhino = config.starter_carriers[3]
 assert(mule.hull == "Mule" and arx.hull == "Soromid Arx"
-   and raven.hull == "Raven Starbridge" and rhino.hull == "Pirate Rhino",
+   and rhino.hull == "Pirate Rhino" and #config.starter_carriers == 3,
    "all requested carrier starts must remain available")
 assert(arx.chapter == "1",
    "the Arx start must begin in Chapter 1")
@@ -27,23 +26,18 @@ assert(#arx.roster == 3 and arx.roster[1].hull == "Soromid Copia"
    and arx.roster[2].hull == "Soromid Ira"
    and arx.roster[3].hull == "Soromid Reaver",
    "the Arx start must retain its Soromid fleet")
-assert(raven.start_system == "Qorel" and raven.home_spob == "Qorellia"
-   and raven.reputation.faction == "Raven Clan",
-   "the Raven start must retain its regional setup")
-assert(rhino.credits == 750000 and rhino.start_system == "Fried"
-   and rhino.home_spob == "Fried IIIa"
+assert(rhino.credits == 750000 and rhino.start_system == "Qorel"
+   and rhino.home_spob == "Qorellia"
    and rhino.command_shuttle == "Pirate Hyena"
+   and rhino.reputation.faction == "Raven Clan"
+   and rhino.reputation.faction_value == 20
    and rhino.reputation.value == -10
    and rhino.reputation.pirate_value == 20
    and rhino.reputation.factions[1] == "Empire"
    and rhino.reputation.factions[8] == "Traders Society"
    and #rhino.bays == 2 and rhino.bays[1] == "Medium Ship Bay"
-   and rhino.bays[2] == "Medium Ship Bay"
-   and rhino.core_outfits[1].name == "Melendez Buffalo Engine"
-   and rhino.core_outfits[1].quantity == 2
-   and rhino.core_outfits[2].name == "Unicorp PT-200 Core System"
-   and rhino.core_outfits[2].quantity == 2,
-   "the Rhino Corsair start must retain its setup and be spaceworthy")
+   and rhino.bays[2] == "Medium Ship Bay",
+   "the Rhino start must retain its Raven Clan pirate setup")
 
 local parked = read_file("spob/nomad_parked_carrier.xml")
 assert(parked:find("<land/>", 1, true)
@@ -54,9 +48,6 @@ assert(parked:find("<land/>", 1, true)
 
 local storage = read_file("ssys/ngc_nomad.xml")
 local ngc2601 = read_file("ssys/ngc2601.xml")
-local storage_wormhole = read_file("spob/nomad_storage_wormhole.xml")
-local storage_wormhole_lua = read_file(
-   "spob/lua/nomad_storage_wormhole.lua")
 assert(config.parking.storage_system == "NGC-N0M4D"
    and storage:find('<ssys name="NGC-N0M4D">', 1, true)
    and storage:find('<pos x="-1709.736566" y="-389.2039425"/>', 1, true),
@@ -66,11 +57,9 @@ assert(storage:find('<jump target="NGC-2601">', 1, true)
    and ngc2601:find('<jump target="NGC-N0M4D">', 1, true)
    and ngc2601:find("<exitonly/>", 1, true),
    "carrier storage must have a hidden one-way path to NGC-2601")
-assert(storage:find("<spob>Nomad Storage Wormhole</spob>", 1, true)
-   and storage_wormhole:find("<tag>wormhole</tag>", 1, true)
-   and storage_wormhole_lua:find("spob.getAll()", 1, true)
-   and storage_wormhole_lua:find("candidate:tags().wormhole", 1, true),
-   "carrier storage must retain its random wormhole exit")
+assert(not storage:find("Nomad Storage Wormhole", 1, true)
+   and parked:find('<pos x="100000" y="100000"/>', 1, true),
+   "carrier storage must omit the old exit and keep its berth off-screen")
 
 local wormhole_outfit = read_file(
    "outfits/unstable_wormhole_generator.xml")
@@ -93,6 +82,9 @@ assert(storage:find("<spob>" .. config.wormhole.source_spob
    and wormhole_alpha:find("<tag>wormhole</tag>", 1, true)
    and wormhole_beta:find("<tag>wormhole</tag>", 1, true),
    "both wormhole mouths must permanently exist in the storage system")
+assert(wormhole_alpha:find('<pos x="700" y="200"/>', 1, true)
+   and wormhole_beta:find('<pos x="700" y="-200"/>', 1, true),
+   "stored wormhole mouths must retain functional initialization positions")
 assert(not wormhole_alpha_lua:find("nomad_wormhole_enabled", 1, true)
    and wormhole_alpha_lua:find("wormhole.setup", 1, true)
    and wormhole_alpha_lua:find("nomad_wormhole_entering", 1, true)

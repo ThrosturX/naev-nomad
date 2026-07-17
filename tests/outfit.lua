@@ -92,9 +92,9 @@ states = {}
 dofile("outfits/nomad_integrated.lua")
 init(player_pilot, pilot_outfit)
 assert(states[#states] == "off" and lua_stats.armour_regen == 1
-   and lua_stats.mass_mod == 100 and lua_stats.shield_mod == 200
-   and lua_stats.ew_hide == -80 and lua_stats.ew_stealth == -80
-   and lua_stats.ew_stealth_min == -80,
+   and lua_stats.mass_mod == nil and lua_stats.shield_mod == 200
+   and lua_stats.ew_hide == -60 and lua_stats.ew_stealth == -60
+   and lua_stats.ew_stealth_min == -60,
    "the Core must initialize off with all bonuses passive")
 ontoggle(player_pilot, pilot_outfit, true, true)
 assert(triggered.name == "nomad_integrated_system_activated"
@@ -144,23 +144,80 @@ local carrier_pilot = {
    shipvarPeek = function(_self, key)
       return key == "nomad_carrier"
    end,
+   fuel = function(self) return self.current_fuel end,
+   setFuel = function(self, value) self.current_fuel = value end,
+   energy = function(self, absolute)
+      assert(absolute == true, "generator energy checks must use absolute GJ")
+      return self.current_energy
+   end,
+   addEnergy = function(self, value)
+      self.current_energy = self.current_energy + value
+   end,
+   shipstat = function(_self, name, internal)
+      assert(name == "cooldown_mod" and internal == true,
+         "generator cooldown must respect the native cooldown modifier")
+      return 0.5
+   end,
+   current_fuel = 1200,
+   current_energy = 1000,
 }
 local ordinary_pilot = {
    shipvarPeek = function() return false end,
 }
 outfit = { nameRaw = function() return "Unstable Wormhole Generator" end }
+mem = {}
+local messages = {}
+player.msg = function(message) messages[#messages + 1] = message end
 dofile("outfits/unstable_wormhole_generator.lua")
 states = {}
+progress = {}
+mem.timer = 10
+init(carrier_pilot, pilot_outfit)
+assert(states[#states] == "off" and mem.timer == nil
+   and mem.cooldown == nil,
+   "incomplete generator cooldown state must be cleared explicitly")
 init(carrier_pilot, pilot_outfit)
 assert(states[#states] == "off",
    "the wormhole generator must initialize as an off one-shot control")
+assert(descextra(carrier_pilot, outfit, pilot_outfit):find("600", 1, true)
+   and descextra(carrier_pilot, outfit, pilot_outfit):find("500", 1, true)
+   and descextra(carrier_pilot, outfit, pilot_outfit):find("60", 1, true),
+   "the wormhole generator must disclose its activation costs and cooldown")
 local wormhole_trigger_count = #triggers
-assert(not ontoggle(carrier_pilot, pilot_outfit, true, true)
+assert(ontoggle(carrier_pilot, pilot_outfit, true, true)
    and #triggers == wormhole_trigger_count + 1
    and triggered.name == "nomad_wormhole_generator_activated"
-   and triggered.payload.id == 7 and states[#states] == "off",
-   "a natural carrier activation must request one wormhole and remain off")
+   and triggered.payload.id == 7 and states[#states] == "cooldown"
+   and progress[#progress] == 1 and carrier_pilot.current_fuel == 600
+   and carrier_pilot.current_energy == 500,
+   "a natural carrier activation must pay its costs and begin cooldown")
 wormhole_trigger_count = #triggers
+assert(not ontoggle(carrier_pilot, pilot_outfit, true, true)
+   and #triggers == wormhole_trigger_count
+   and carrier_pilot.current_fuel == 600
+   and carrier_pilot.current_energy == 500,
+   "a cooling generator must not reactivate or consume resources")
+update(carrier_pilot, pilot_outfit, 15)
+assert(states[#states] == "cooldown" and progress[#progress] == 0.5,
+   "the generator must expose cooldown progress")
+update(carrier_pilot, pilot_outfit, 15)
+assert(states[#states] == "off" and progress[#progress] == 0,
+   "the generator must become available after its modified cooldown")
+carrier_pilot.current_fuel = 599
+assert(not ontoggle(carrier_pilot, pilot_outfit, true, true)
+   and #triggers == wormhole_trigger_count
+   and carrier_pilot.current_fuel == 599
+   and carrier_pilot.current_energy == 500
+   and messages[#messages]:find("600", 1, true),
+   "insufficient fuel must reject activation without charging energy")
+carrier_pilot.current_fuel = 600
+carrier_pilot.current_energy = 499
+assert(not ontoggle(carrier_pilot, pilot_outfit, true, true)
+   and #triggers == wormhole_trigger_count
+   and carrier_pilot.current_fuel == 600
+   and carrier_pilot.current_energy == 499
+   and messages[#messages]:find("500", 1, true),
+   "insufficient energy must reject activation without charging fuel")
 assert(not ontoggle(ordinary_pilot, pilot_outfit, true, true)
    and #triggers == wormhole_trigger_count,
    "a non-carrier pilot must not activate the generator")

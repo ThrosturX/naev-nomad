@@ -27,6 +27,10 @@ config.starter_carriers = {
       credits = 30000,
       choice = "Mule — 30,000 credits",
       bays = { "Medium Ship Bay", "Small Ship Bay" },
+      core_outfits = {
+         { name = "Melendez Buffalo Engine",
+            slots = { "engines", "engines_secondary" } },
+      },
    },
    {
       hull = "Soromid Arx",
@@ -60,40 +64,25 @@ config.starter_carriers = {
       },
    },
    {
-      -- This starter-only Raven refit inherits the stock Pirate Starbridge.
-      -- Its two converted mounts make the requested hull a valid first home
-      -- without changing the eligibility rules for later carrier purchases.
-      hull = "Raven Starbridge",
-      name = "Nevermore",
-      acquired = "Your carrier and home among the stars.",
-      credits = 350000,
-      choice = "Raven Pirate — 350,000 credits",
-      bays = { "Medium Ship Bay", "Small Ship Bay" },
-      command_shuttle = "Pirate Hyena",
-      start_system = "Qorel",
-      home_spob = "Qorellia",
-      known_jumps = { "Doowa", "Trask" },
-      reputation = {
-         faction = "Raven Clan",
-         value = 20,
-         pirate_value = 20,
-      },
-   },
-   {
       hull = "Pirate Rhino",
       name = "Corsair",
       acquired = "Your carrier and home among the stars.",
       credits = 750000,
-      choice = "Rhino Corsair — 750,000 credits",
+      choice = "Raven Rhino — 750,000 credits",
       bays = { "Medium Ship Bay", "Medium Ship Bay" },
       command_shuttle = "Pirate Hyena",
-      start_system = "Fried",
-      home_spob = "Fried IIIa",
+      start_system = "Qorel",
+      home_spob = "Qorellia",
+      known_jumps = { "Doowa", "Trask" },
       core_outfits = {
-         { name = "Melendez Buffalo Engine", quantity = 2 },
-         { name = "Unicorp PT-200 Core System", quantity = 2 },
+         { name = "Melendez Buffalo Engine",
+            slots = { "engines", "engines_secondary" } },
+         { name = "Unicorp PT-200 Core System",
+            slots = { "systems", "systems_secondary" } },
       },
       reputation = {
+         faction = "Raven Clan",
+         faction_value = 20,
          factions = {
             "Empire", "Dvaered", "Sirius", "Soromid", "Za'lek",
             "Independent", "Frontier", "Traders Society",

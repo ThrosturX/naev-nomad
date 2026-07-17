@@ -1,6 +1,6 @@
 # Nomad Fleet
 
-Nomad is a Naev carrier campaign with Mule, Soromid Arx, and Raven Starbridge starts. Physical bay outfits launch disposable copies of owned craft; returning copies fly back to the carrier, while Joyride handles player-controlled sorties and carrier docking.
+Nomad is a Naev carrier campaign with Mule, Soromid Arx, and Raven Clan Pirate Rhino starts. Physical bay outfits launch disposable copies of owned craft; returning copies fly back to the carrier, while Joyride handles player-controlled sorties and carrier docking.
 
 The carrier can be parked in space for equipment and fleet services. Owned ships must fit its installed bays, and incompatible purchases are refunded or offered as carrier replacements. An optional medium Unstable Wormhole Generator can open a temporary route to a nearby system. The carrier stays behind when a bay ship uses it and the route collapses when the commander returns aboard the carrier.
 

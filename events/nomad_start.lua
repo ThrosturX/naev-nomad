@@ -29,6 +29,30 @@ local function largest_ordinary_utility(slots)
    return selected and selected.id
 end
 
+local function install_in_empty_slots(pilot, name, slot_type, quantity,
+      ordinary_only)
+   local remaining = quantity or 1
+   local installed = pilot:outfits()
+   for index, slot in ipairs(pilot:ship():getSlots()) do
+      local id = slot.id or index
+      if remaining > 0 and slot.type == slot_type
+         and (not ordinary_only or not slot.property) and not installed[id]
+         and pilot:outfitAddSlot(name, id, true, true) then
+         remaining = remaining - 1
+      end
+   end
+   return (quantity or 1) - remaining
+end
+
+local function install_core_outfit(pilot, core)
+   for _slot_index, slot_name in ipairs(core.slots) do
+      pilot:outfitRmSlot(slot_name)
+      assert(pilot:outfitAddSlot(core.name, slot_name, true, false),
+         "unable to install starter carrier core outfit " .. core.name
+            .. " in " .. slot_name)
+   end
+end
+
 local function apply_starting_flavour(starter)
    if starter.reputation then
       local reputation = starter.reputation
@@ -41,7 +65,8 @@ local function apply_starting_flavour(starter)
       if reputation.faction then
          local home = faction.get(reputation.faction)
          home:setKnown(true)
-         home:setReputationGlobal(reputation.value)
+         home:setReputationGlobal(
+            reputation.faction_value or reputation.value)
       end
       if reputation.pirate_value then
          pirate.updateStandings(reputation.pirate_value)
@@ -90,9 +115,7 @@ function create()
    player.pay(starter.credits - player.credits())
    local pilot = player.pilot()
    for _core_index, core in ipairs(starter.core_outfits or {}) do
-      local quantity = core.quantity or 1
-      assert(pilot:outfitAdd(core.name, quantity, true) == quantity,
-         "unable to install starter carrier core outfit " .. core.name)
+      install_core_outfit(pilot, core)
    end
    for _bay_index, outfit_name in ipairs(starter.bays or config.starter_bays) do
       if pilot:outfitAdd(outfit_name) <= 0 then
@@ -105,11 +128,13 @@ function create()
       "unable to install starter carrier Operational Core")
    for _system_index, system in ipairs(config.integrated_systems) do
       if system.outfit ~= config.operational_core
-         and pilot:outfitAdd(system.outfit) <= 0 then
+         and install_in_empty_slots(
+            pilot, system.outfit, "Utility", 1, true) <= 0 then
          player.outfitAdd(system.outfit, 1)
       end
    end
-   if pilot:outfitAdd(config.wormhole_generator) <= 0 then
+   if install_in_empty_slots(
+         pilot, config.wormhole_generator, "Utility", 1, true) <= 0 then
       player.outfitAdd(config.wormhole_generator, 1)
    end
    local roster = starter.roster or {}

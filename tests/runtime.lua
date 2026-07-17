@@ -109,6 +109,22 @@ assert(state.active_sortie, "Nomad sorties must be tracked")
 runtime.joyride_ended(state, { client = "nomad" })
 assert(not state.active_sortie, "returning must clear the transient sortie flag")
 
+local handoff = {
+   active_source = "command",
+   active_kind = "virtual",
+   virtual_name = "Command Shuttle",
+   controlled_craft = nil,
+}
+assert(runtime.controlled_ship_changed(handoff, "Needle") == nil
+   and handoff.active_source == "bay"
+   and handoff.active_kind == "owned"
+   and handoff.virtual_name == nil
+   and handoff.controlled_craft == "Needle",
+   "an owned ship selected from the command shuttle must become a bay sortie")
+assert(runtime.controlled_ship_changed(handoff, nil) == nil
+   and handoff.controlled_craft == "Needle",
+   "malformed controlled-ship changes must leave sortie state untouched")
+
 local mapped = runtime.map_bay_slots({
    { name = "S", outfit = "Small Ship Bay" },
    { name = "S", outfit = "Small Ship Bay" },

@@ -5,11 +5,10 @@ local actions = {
 
 local core_passive_stats = {
    armour_regen = 1,
-   mass_mod = 100,
    shield_mod = 200,
-   ew_hide = -80,
-   ew_stealth = -80,
-   ew_stealth_min = -80,
+   ew_hide = -60,
+   ew_stealth = -60,
+   ew_stealth_min = -60,
 }
 
 local function apply_state(pilot_outfit)

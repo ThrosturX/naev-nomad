@@ -228,4 +228,16 @@ function runtime.joyride_ended(state, payload)
    return state
 end
 
+function runtime.controlled_ship_changed(state, controlled)
+   if type(controlled) ~= "string" or controlled == "" then return nil end
+   local previous = state.controlled_craft
+   state.controlled_craft = controlled
+   state.active_kind = "owned"
+   state.virtual_name = nil
+   if state.active_source == "command" then
+      state.active_source = "bay"
+   end
+   return previous
+end
+
 return runtime

@@ -1780,6 +1780,24 @@ local function fallback_to_carrier(record, selected, reason)
 end
 
 function nomad_takeoff()
+   -- Joyride adopts a landed ship selection before takeoff. Reconcile the
+   -- public session state here as a lifecycle boundary in case its custom
+   -- controlled-ship notification was missed or came before this event was
+   -- ready. An owned controlled ship is no longer the command shuttle.
+   local joyride_state = naev.cache().joyride
+   if mem.nomad.active_source == "command" and joyride_state
+      and joyride_state.profile
+      and joyride_state.profile.client == config.joyride_client
+      and joyride_state.kind == "owned" then
+      local controlled = joyride_state.controlled or player.ship()
+      if controlled == player.ship() then
+         local previous = runtime.controlled_ship_changed(mem.nomad, controlled)
+         if previous and previous ~= controlled then
+            runtime.service_craft(craft_state(previous))
+         end
+         craft_state(controlled).phase = "controlled"
+      end
+   end
    if mem.nomad.parked then
       if not is_carrier(player.ship()) then
          local record = mem.nomad.parked
@@ -2113,13 +2131,11 @@ end
 function nomad_joyride_controlled_changed(payload)
    if not payload or payload.client ~= config.joyride_client
       or not payload.controlled then return end
-   local previous = mem.nomad.controlled_craft
+   local previous = runtime.controlled_ship_changed(
+      mem.nomad, payload.controlled)
    if previous and previous ~= payload.controlled then
       runtime.service_craft(craft_state(previous))
    end
-   mem.nomad.controlled_craft = payload.controlled
-   mem.nomad.active_kind = "owned"
-   mem.nomad.virtual_name = nil
    craft_state(payload.controlled).phase = "controlled"
    apply_rules(false)
 end
