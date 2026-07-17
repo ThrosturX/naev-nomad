@@ -10,6 +10,8 @@
  <spobs>
   <spob>Nomad Parked Carrier</spob>
   <spob>Nomad Storage Wormhole</spob>
+  <spob>Nomad Unstable Wormhole Alpha</spob>
+  <spob>Nomad Unstable Wormhole Beta</spob>
  </spobs>
  <jumps>
   <jump target="NGC-2601">

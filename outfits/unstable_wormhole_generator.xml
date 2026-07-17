@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<outfit name="Unstable Wormhole Generator">
+ <general>
+  <unique/>
+  <typename>Nomad Utility</typename>
+  <slot>utility</slot>
+  <size>medium</size>
+  <mass>80</mass>
+  <price>0</price>
+  <gfx_store>unstable_wormhole_generator.avif</gfx_store>
+  <description>Tears open a temporary paired wormhole between the Nomad carrier and another nearby system. The carrier stays behind when a bay ship enters, and the pair collapses when the commander returns aboard the carrier.</description>
+ </general>
+ <specific type="modification">
+  <lua>outfits/unstable_wormhole_generator.lua</lua>
+ </specific>
+</outfit>

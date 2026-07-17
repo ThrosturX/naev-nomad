@@ -23,11 +23,26 @@ only—never pilots, hooks, ship objects, or other runtime handles. Nomad is
 pre-testing: keep the state version at 0 and discard prototype saves when
 structures change.
 
+Never shadow the translation function `_`; prefix intentionally unused
+variables with `_` instead. Do not use `_G` in production code. Do not add
+hooks that run every frame, including `hook.update`. Never assume leftover
+state can recover itself: explicitly
+validate, clear, or reject every stale state. Do not infer lifecycle ordering
+or object validity across hooks, transitions, landing, takeoff, swapping,
+loading, or universe diffs; verify the relevant Naev implementation and make
+each transition explicit.
+
 Nomad directly depends on `TXCrewmates`; Joyride is transitive. Use Joyride's
 public API and custom lifecycle events rather than copying its ship-swap logic.
 Use the client ID `nomad` so Crewmates can distinguish Nomad launches.
 
 ## Testing and Changes
+
+Tests are proof of failure only, never proof of success. A failing test can
+demonstrate a defect, but passing mocks and standalone Lua tests cannot prove
+that behaviour works in the Naev engine. Do not report automated checks as
+evidence that player-visible engine integration is working; require an in-game
+reproduction for that conclusion.
 
 Add deterministic tests for every capacity rule. Before enabling
 destructive enforcement, manually test new and existing saves, buying and

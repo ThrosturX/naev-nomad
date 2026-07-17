@@ -88,12 +88,17 @@ function create()
    player.shipSwap(carrier_name, true, true)
    player.shipvarPush(config.carrier_shipvar, true)
    player.pay(starter.credits - player.credits())
+   local pilot = player.pilot()
+   for _core_index, core in ipairs(starter.core_outfits or {}) do
+      local quantity = core.quantity or 1
+      assert(pilot:outfitAdd(core.name, quantity, true) == quantity,
+         "unable to install starter carrier core outfit " .. core.name)
+   end
    for _bay_index, outfit_name in ipairs(starter.bays or config.starter_bays) do
-      if player.pilot():outfitAdd(outfit_name) <= 0 then
+      if pilot:outfitAdd(outfit_name) <= 0 then
          player.outfitAdd(outfit_name, 1)
       end
    end
-   local pilot = player.pilot()
    local core_slot = largest_ordinary_utility(pilot:ship():getSlots())
    assert(core_slot, "starter carrier has no utility slot for its Core")
    assert(pilot:outfitAddSlot(config.operational_core, core_slot, true, true),
@@ -103,6 +108,9 @@ function create()
          and pilot:outfitAdd(system.outfit) <= 0 then
          player.outfitAdd(system.outfit, 1)
       end
+   end
+   if pilot:outfitAdd(config.wormhole_generator) <= 0 then
+      player.outfitAdd(config.wormhole_generator, 1)
    end
    local roster = starter.roster or {}
    for index = 1, #roster do

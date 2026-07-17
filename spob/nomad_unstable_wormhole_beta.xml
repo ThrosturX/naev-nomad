@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<spob name="Nomad Unstable Wormhole Beta">
+ <display>#bUnstable Wormhole#0</display>
+ <feature>#bUnstable Wormhole#0</feature>
+ <lua>nomad_unstable_wormhole_beta.lua</lua>
+ <marker>spobmarker_wormhole</marker>
+ <pos x="700" y="-200"/>
+ <GFX/>
+ <general>
+  <class>Wormhole</class>
+  <population>0</population>
+  <hide>0</hide>
+  <services><uninhabited/></services>
+ </general>
+ <tags>
+  <tag>wormhole</tag>
+  <tag>restricted</tag>
+ </tags>
+</spob>

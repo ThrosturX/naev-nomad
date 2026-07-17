@@ -1,3 +1,5 @@
+package.path = "scripts/?.lua;scripts/?/init.lua;" .. package.path
+
 local triggered
 local triggers = {}
 local states = {}
@@ -137,5 +139,35 @@ ontoggle(player_pilot, pilot_outfit, true, true)
 assert(triggered.name == "nomad_integrated_system_activated"
    and triggered.payload.action == "shuttle",
    "the shuttle bay must trigger command shuttle launch")
+
+local carrier_pilot = {
+   shipvarPeek = function(_self, key)
+      return key == "nomad_carrier"
+   end,
+}
+local ordinary_pilot = {
+   shipvarPeek = function() return false end,
+}
+outfit = { nameRaw = function() return "Unstable Wormhole Generator" end }
+dofile("outfits/unstable_wormhole_generator.lua")
+states = {}
+init(carrier_pilot, pilot_outfit)
+assert(states[#states] == "off",
+   "the wormhole generator must initialize as an off one-shot control")
+local wormhole_trigger_count = #triggers
+assert(not ontoggle(carrier_pilot, pilot_outfit, true, true)
+   and #triggers == wormhole_trigger_count + 1
+   and triggered.name == "nomad_wormhole_generator_activated"
+   and triggered.payload.id == 7 and states[#states] == "off",
+   "a natural carrier activation must request one wormhole and remain off")
+wormhole_trigger_count = #triggers
+assert(not ontoggle(ordinary_pilot, pilot_outfit, true, true)
+   and #triggers == wormhole_trigger_count,
+   "a non-carrier pilot must not activate the generator")
+onadd(ordinary_pilot, pilot_outfit)
+assert(triggered.name == "nomad_invalid_wormhole_generator"
+   and triggered.payload.pilot == ordinary_pilot
+   and descextra(ordinary_pilot, outfit, pilot_outfit):find("only"),
+   "fitting the generator to a non-carrier must request explicit rejection")
 
 print("ok - nomad bay outfit")

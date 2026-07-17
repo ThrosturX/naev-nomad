@@ -55,7 +55,7 @@ package.preload.joyride = function()
                setActiveBoard = function() end,
             },
          }
-         if _G.nomad_joyride_started then
+         if nomad_joyride_started then
             nomad_joyride_started {
                client = profile.client,
                pilot = naev.cache().joyride.pilot,
@@ -65,7 +65,7 @@ package.preload.joyride = function()
       end,
       takeoff = function()
          local state = naev.cache().joyride
-         if state and not state.pilot then
+         if state and state.follow_mothership ~= false and not state.pilot then
             state.pilot = {
                exists = function() return true end,
                outfits = function() return {} end,
@@ -73,6 +73,33 @@ package.preload.joyride = function()
             }
          end
          return true
+      end,
+      follow_mothership = function(enabled)
+         local state = naev.cache().joyride
+         if not state then return false, "no Joyride session is active" end
+         state.follow_mothership = enabled ~= false
+         return true
+      end,
+      mothership_follows = function()
+         local state = naev.cache().joyride
+         return state ~= nil and state.follow_mothership ~= false
+      end,
+      spawn_mothership = function()
+         local state = naev.cache().joyride
+         if not state or state.follow_mothership == false then return nil end
+         if state.pilot and state.pilot:exists() then return state.pilot end
+         state.pilot = {
+            exists = function() return true end,
+            outfits = function() return {} end,
+            setActiveBoard = function() end,
+         }
+         if nomad_joyride_started then
+            nomad_joyride_started {
+               client = state.profile and state.profile.client or "nomad",
+               pilot = state.pilot,
+            }
+         end
+         return state.pilot
       end,
    }
 end
@@ -176,6 +203,8 @@ local start_vars = {}
 local carrier_tag
 local starting_bays = {}
 local starting_install_attempts = {}
+local starting_core_outfits = {}
+local starting_generator_fits = true
 local starting_integrated = {}
 local starting_slot_outfits = {}
 local starting_slots = {
@@ -233,9 +262,18 @@ player = {
    end,
    pilot = function()
       return {
-         outfitAdd = function(_, what)
+         outfitAdd = function(_, what, quantity)
             starting_install_attempts[#starting_install_attempts + 1] = what
+            if what == "Melendez Buffalo Engine"
+               or what == "Unicorp PT-200 Core System" then
+               quantity = quantity or 1
+               starting_core_outfits[what] =
+                  (starting_core_outfits[what] or 0) + quantity
+               return quantity
+            end
             if what == "Small Ship Bay" then return 0 end
+            if what == config.wormhole_generator
+               and not starting_generator_fits then return 0 end
             starting_bays[#starting_bays + 1] = what
             return 1
          end,
@@ -288,9 +326,10 @@ assert(starting_ship_swap.name == selected_starter.name
    "Nomad start must atomically replace the temporary bootstrap hull")
 assert(starting_credits == selected_starter.credits and starting_payment == 0,
    "Nomad start must apply the selected carrier's exact starting funds")
-assert(#starting_install_attempts == 3 and #starting_bays == 2
+assert(#starting_install_attempts == 4 and #starting_bays == 3
    and starting_bays[1] == "Medium Ship Bay"
    and starting_bays[2] == config.shuttle_bay
+   and starting_bays[3] == config.wormhole_generator
    and #starting_integrated == 1
    and starting_integrated[1].outfit == config.operational_core
    and starting_integrated[1].id == 5
@@ -302,6 +341,15 @@ for name, quantity in pairs(config.spare_bays) do
    assert(starting_inventory[name] == quantity + failed_starter,
       "new Nomad pilots must receive every configured spare bay control")
 end
+assert(starting_inventory[config.wormhole_generator] == nil,
+   "new Nomad pilots must try to fit the optional wormhole generator")
+starting_generator_fits = false
+starting_inventory[config.wormhole_generator] = nil
+create()
+assert(starting_inventory[config.wormhole_generator] == 1,
+   "a starter carrier without a free slot must retain the generator in stock")
+starting_generator_fits = true
+starting_inventory[config.wormhole_generator] = nil
 
 starting_slots = {
    { id = 6, type = "Utility", size = "Large",
@@ -329,6 +377,7 @@ assert(every_starter_installs_core,
    "every Nomad carrier start must install the Operational Core")
 faction_standings = {}
 pirate_standing_update = nil
+starting_core_outfits = {}
 starting_choice = 4
 create()
 assert(faction_standings.Empire == -10 and faction_standings.Dvaered == -10
@@ -343,8 +392,10 @@ assert(faction_standings.Empire == -10 and faction_standings.Dvaered == -10
    and faction_standings["Black Lotus"] == 20
    and faction_standings.Proteron == nil and faction_standings.Thurion == nil
    and faction_standings.Lost == nil
-   and pirate_standing_update == 20,
-   "the Rhino Corsair start must begin disliked by standard factions but pirates")
+   and pirate_standing_update == 20
+   and starting_core_outfits["Melendez Buffalo Engine"] == 2
+   and starting_core_outfits["Unicorp PT-200 Core System"] == 2,
+   "the Rhino Corsair start must be spaceworthy and retain pirate standings")
 starting_choice = 1
 local current_hull = selected_starter.hull
 local carrier_tags = { [selected_starter.hull] = true }
@@ -464,10 +515,7 @@ local current_pilot = {
       initialized_outfit_slots[#initialized_outfit_slots + 1] = id
    end,
    pos = function()
-      return {
-         get = function() return player_x, player_y end,
-         dist = function() return 0 end,
-      }
+      return vec2.new(player_x, player_y)
    end,
    exists = function() return true end,
    msg = function() end,
@@ -482,6 +530,7 @@ local current_pilot = {
       manual_control = enabled ~= false
    end,
    dir = function() return 0 end,
+   radius = function() return 100 end,
    health = function() return 100, shield end,
    energy = function() return 100 end,
    cargoList = function() return {} end,
@@ -651,6 +700,23 @@ naev.claimTest = function() return true end
 naev.ticks = function() return 12345 end
 local ordinary_spob_denied
 local parked_spob_known
+local wormhole_spob_known = {}
+local wormhole_locations = {
+   [config.wormhole.source_spob] = config.wormhole.storage_system,
+   [config.wormhole.target_spob] = config.wormhole.storage_system,
+}
+local function wormhole_endpoint(name)
+   return {
+      nameRaw = function() return name end,
+      system = function()
+         local location = wormhole_locations[name]
+         return location and { nameRaw = function() return location end }
+      end,
+      setKnown = function(_self, known) wormhole_spob_known[name] = known end,
+   }
+end
+local wormhole_source_spob = wormhole_endpoint(config.wormhole.source_spob)
+local wormhole_target_spob = wormhole_endpoint(config.wormhole.target_spob)
 local ordinary_spob = {
    nameRaw = function() return "Ordinary Port" end,
    tags = function() return {} end,
@@ -671,12 +737,26 @@ local parked_spob = {
 }
 local test_system = {
    nameRaw = function() return current_system_name end,
+   tags = function() return {} end,
    spobs = function() return { ordinary_spob, wormhole_spob, parked_spob } end,
+   jumpDist = function(_self, candidate) return candidate.distance end,
 }
-system = { cur = function() return test_system end }
+local nearby_system = {
+   distance = 2,
+   nameRaw = function() return "Nearby System" end,
+   name = function() return "Nearby System" end,
+   tags = function() return {} end,
+   radius = function() return 10000 end,
+}
+system = {
+   cur = function() return test_system end,
+   getAll = function() return { test_system, nearby_system } end,
+}
 spob = {
    get = function(name)
       if name == config.parking.spob then return parked_spob end
+      if name == config.wormhole.source_spob then return wormhole_source_spob end
+      if name == config.wormhole.target_spob then return wormhole_target_spob end
    end,
    cur = function()
       if not landed then
@@ -700,14 +780,54 @@ diff = {
       current_diff_name = name
       dynamic_diff = xml
       diff_applied = true
+      for system_name, body in xml:gmatch(
+            '<system name="([^"]+)">(.-)</system>') do
+         local decoded_system_name = system_name:gsub("&quot;", '"')
+            :gsub("&apos;", "'"):gsub("&gt;", ">")
+            :gsub("&lt;", "<"):gsub("&amp;", "&")
+         for spob_name in body:gmatch("<spob_add>(.-)</spob_add>") do
+            if wormhole_locations[spob_name] then
+               wormhole_locations[spob_name] = decoded_system_name
+            end
+         end
+      end
       return true
    end,
    remove = function(name)
       assert(name == current_diff_name)
+      if dynamic_diff
+         and dynamic_diff:find(config.wormhole.source_spob, 1, true) then
+         wormhole_locations[config.wormhole.source_spob] =
+            config.wormhole.storage_system
+         wormhole_locations[config.wormhole.target_spob] =
+            config.wormhole.storage_system
+      end
       diff_applied = false
    end,
 }
-vec2 = { new = function(x, y) return { x = x or 0, y = y or 0 } end }
+local vector_mt = {
+   __add = function(left, right)
+      return vec2.new(left.x + right.x, left.y + right.y)
+   end,
+}
+vec2 = {
+   new = function(x, y)
+      local value = { x = x or 0, y = y or 0 }
+      value.get = function() return value.x, value.y end
+      value.dist = function(_self, other)
+         local dx, dy = value.x - other.x, value.y - other.y
+         return math.sqrt(dx * dx + dy * dy)
+      end
+      return setmetatable(value, vector_mt)
+   end,
+   newP = function(radius, angle)
+      return vec2.new(radius * math.cos(angle), radius * math.sin(angle))
+   end,
+}
+rnd = {
+   rnd = function(minimum, _maximum) return minimum end,
+   angle = function() return math.pi * 0.25 end,
+}
 pilot = {
    get = function()
       local result = {}
@@ -831,6 +951,8 @@ assert(registered.ship_swap == "nomad_ship_changed",
    "carrier landing rules must follow ship changes")
 assert(registered.takeoff == "nomad_takeoff",
    "takeoff hooks must restore a parked carrier")
+assert(registered.nomad_wormhole_entering == "nomad_wormhole_entering",
+   "wormhole traversal must register its mothership-follow suppression hook")
 assert(registered.load == "nomad_restore_parked_diff",
    "load hooks must restore the dynamic spob before initialization")
 assert(registered.saved == true, "Nomad campaign state must persist")
@@ -843,6 +965,8 @@ assert(ensured_commander.options.minimum == config.minimum_crew.commander
    "Crewmates must guarantee the configured commander and shuttle")
 assert(fleet_capacity == 0,
    "Nomad initialization must disable vanilla fleet capacity")
+assert(parked_spob_known == false,
+   "Nomad initialization must erase temporary berth discovery state")
 assert(installed_outfits[1] == "Medium Ship Bay"
    and installed_outfits[2] == "Small Ship Bay"
    and installed_outfits[3] == config.shuttle_bay
@@ -858,6 +982,70 @@ assert(type(info_actions["Launch Shuttle"]) == "function"
    and type(info_actions["Park Carrier"]) == "function",
    "the carrier info menu must expose command launch and parking actions")
 
+nomad_wormhole_generator_activated()
+local first_wormhole_diff = current_diff_name
+assert(diff_applied and mem.nomad.wormhole_diff == current_diff_name
+   and wormhole_locations[config.wormhole.source_spob] == current_system_name
+   and wormhole_locations[config.wormhole.target_spob]
+      == nearby_system:nameRaw()
+   and wormhole_spob_known[config.wormhole.source_spob] == true
+   and wormhole_spob_known[config.wormhole.target_spob] == true,
+   "generator activation must move both stored endpoints into a live pair: "
+      .. tostring(diff_applied) .. " / "
+      .. tostring(mem.nomad.wormhole_diff) .. " / "
+      .. tostring(wormhole_locations[config.wormhole.source_spob]) .. " / "
+      .. tostring(wormhole_locations[config.wormhole.target_spob]) .. " / "
+      .. tostring(carrier_status and carrier_status.title) .. ": "
+      .. tostring(carrier_status and carrier_status.message))
+local wormhole_origin = current_system_name
+current_hull = "Hyena"
+current_size = 1
+mem.nomad.active_sortie = true
+mem.nomad.active_source = "bay"
+shared_cache.joyride = {
+   profile = { client = config.joyride_client },
+   follow_mothership = true,
+}
+nomad_wormhole_entering({ origin = wormhole_origin })
+assert(mem.nomad.wormhole_follow_origin == wormhole_origin
+   and shared_cache.joyride.follow_mothership == false,
+   "bay-ship traversal must remember the origin and pause Joyride following")
+current_system_name = nearby_system:nameRaw()
+nomad_wormhole_entering({ origin = current_system_name })
+assert(mem.nomad.wormhole_follow_origin == wormhole_origin,
+   "return traversal must not replace the system where the carrier was left")
+landed = true
+nomad_landed()
+landed = false
+nomad_takeoff()
+assert(diff_applied and mem.nomad.wormhole_follow_origin == wormhole_origin,
+   "landing and taking off away from the carrier must retain the return aperture")
+current_system_name = wormhole_origin
+nomad_apply_rules()
+assert(mem.nomad.wormhole_follow_origin == nil
+   and shared_cache.joyride.follow_mothership == true
+   and attached_mothership.mothership == shared_cache.joyride.pilot,
+   "the mothership may spawn normally once the bay ship returns to its origin")
+current_hull = selected_starter.hull
+current_size = 6
+shared_cache.joyride = nil
+nomad_joyride_ended({ client = config.joyride_client })
+assert(not diff_applied and mem.nomad.wormhole_diff == nil
+   and wormhole_locations[config.wormhole.source_spob]
+      == config.wormhole.storage_system
+   and wormhole_locations[config.wormhole.target_spob]
+      == config.wormhole.storage_system,
+   "returning to the carrier must synchronously move both endpoints to storage")
+nomad_wormhole_generator_activated()
+assert(diff_applied and current_diff_name ~= first_wormhole_diff
+   and mem.nomad.wormhole_diff == current_diff_name
+   and wormhole_locations[config.wormhole.source_spob] == current_system_name
+   and wormhole_locations[config.wormhole.target_spob]
+      == nearby_system:nameRaw(),
+   "reactivation may repeat a destination but must create a fresh live pair")
+nomad_joyride_ended({ client = config.joyride_client })
+assert(not diff_applied and mem.nomad.wormhole_diff == nil,
+   "a repeatedly opened pair must still close completely")
 local function physical_id(outfit_name, occurrence)
    local found = 0
    for id, name in ipairs(installed_outfits) do

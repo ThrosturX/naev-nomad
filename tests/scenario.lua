@@ -38,13 +38,17 @@ assert(rhino.credits == 750000 and rhino.start_system == "Fried"
    and rhino.reputation.factions[1] == "Empire"
    and rhino.reputation.factions[8] == "Traders Society"
    and #rhino.bays == 2 and rhino.bays[1] == "Medium Ship Bay"
-   and rhino.bays[2] == "Medium Ship Bay",
-   "the Rhino Corsair start must retain its pirate Haven setup")
+   and rhino.bays[2] == "Medium Ship Bay"
+   and rhino.core_outfits[1].name == "Melendez Buffalo Engine"
+   and rhino.core_outfits[1].quantity == 2
+   and rhino.core_outfits[2].name == "Unicorp PT-200 Core System"
+   and rhino.core_outfits[2].quantity == 2,
+   "the Rhino Corsair start must retain its setup and be spaceworthy")
 
 local parked = read_file("spob/nomad_parked_carrier.xml")
 assert(parked:find("<land/>", 1, true)
    and parked:find("<outfits/>", 1, true)
-   and parked:find("<hide>0.01</hide>", 1, true)
+   and parked:find("<hide>0</hide>", 1, true)
    and parked:find("<space>nomad_invisible</space>", 1, true),
    "the parked carrier must provide services without appearing on local maps")
 
@@ -67,6 +71,39 @@ assert(storage:find("<spob>Nomad Storage Wormhole</spob>", 1, true)
    and storage_wormhole_lua:find("spob.getAll()", 1, true)
    and storage_wormhole_lua:find("candidate:tags().wormhole", 1, true),
    "carrier storage must retain its random wormhole exit")
+
+local wormhole_outfit = read_file(
+   "outfits/unstable_wormhole_generator.xml")
+local wormhole_alpha = read_file(
+   "spob/nomad_unstable_wormhole_alpha.xml")
+local wormhole_beta = read_file(
+   "spob/nomad_unstable_wormhole_beta.xml")
+local wormhole_alpha_lua = read_file(
+   "spob/lua/nomad_unstable_wormhole_alpha.lua")
+local wormhole_beta_lua = read_file(
+   "spob/lua/nomad_unstable_wormhole_beta.lua")
+assert(wormhole_outfit:find("<slot>utility</slot>", 1, true)
+   and wormhole_outfit:find("<size>medium</size>", 1, true)
+   and parked:find("<item>Unstable Wormhole Generator</item>", 1, true),
+   "the optional generator must be a medium utility sold aboard the carrier")
+assert(storage:find("<spob>" .. config.wormhole.source_spob
+      .. "</spob>", 1, true)
+   and storage:find("<spob>" .. config.wormhole.target_spob
+      .. "</spob>", 1, true)
+   and wormhole_alpha:find("<tag>wormhole</tag>", 1, true)
+   and wormhole_beta:find("<tag>wormhole</tag>", 1, true),
+   "both wormhole mouths must permanently exist in the storage system")
+assert(not wormhole_alpha_lua:find("nomad_wormhole_enabled", 1, true)
+   and wormhole_alpha_lua:find("wormhole.setup", 1, true)
+   and wormhole_alpha_lua:find("nomad_wormhole_entering", 1, true)
+   and wormhole_alpha_lua:find("wormhole_land(target_spob, subject)", 1, true)
+   and wormhole_alpha_lua:find("shipvarPeek", 1, true)
+   and not wormhole_beta_lua:find("nomad_wormhole_enabled", 1, true)
+   and wormhole_beta_lua:find("wormhole.setup", 1, true)
+   and wormhole_beta_lua:find("nomad_wormhole_entering", 1, true)
+   and wormhole_beta_lua:find("wormhole_land(target_spob, subject)", 1, true)
+   and wormhole_beta_lua:find("shipvarPeek", 1, true),
+   "present apertures must use unconditional upstream traversal and report bay traversal")
 
 local core = read_file("outfits/nomadic_operational_core.xml")
 local shuttle = read_file("outfits/shuttle_bay.xml")

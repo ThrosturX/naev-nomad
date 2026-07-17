@@ -16,7 +16,7 @@
   <class>0</class>
   <population>0</population>
   <!-- Keep local system maps from recording this temporary relocation. -->
-  <hide>0.01</hide>
+  <hide>0</hide>
   <services>
    <land/>
    <refuel/>
@@ -34,6 +34,7 @@
   <item>Medium Ship Bay</item>
   <item>Large Ship Bay</item>
   <item>XL Ship Bay</item>
+  <item>Unstable Wormhole Generator</item>
  </tech>
  <tags>
   <tag>station</tag>

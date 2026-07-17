@@ -89,6 +89,10 @@ config.starter_carriers = {
       command_shuttle = "Pirate Hyena",
       start_system = "Fried",
       home_spob = "Fried IIIa",
+      core_outfits = {
+         { name = "Melendez Buffalo Engine", quantity = 2 },
+         { name = "Unicorp PT-200 Core System", quantity = 2 },
+      },
       reputation = {
          factions = {
             "Empire", "Dvaered", "Sirius", "Soromid", "Za'lek",
@@ -103,6 +107,7 @@ config.starter_carriers = {
 
 config.operational_core = "Nomadic Operational Core"
 config.shuttle_bay = "Shuttle Bay"
+config.wormhole_generator = "Unstable Wormhole Generator"
 config.integrated_systems = {
    {
       outfit = config.operational_core,
@@ -172,6 +177,16 @@ config.parking = {
    stop_speed = 5,
    storage_system = "NGC-N0M4D",
    minimum_shield = 90,
+}
+config.wormhole = {
+   diff = "Nomad Unstable Wormhole Pair",
+   source_spob = "Nomad Unstable Wormhole Alpha",
+   target_spob = "Nomad Unstable Wormhole Beta",
+   storage_system = "NGC-N0M4D",
+   minimum_jumps = 1,
+   maximum_jumps = 3,
+   source_offset = 600,
+   target_radius_fraction = 0.55,
 }
 config.starter_subship = {
    id = "nomad_starter_shuttle",

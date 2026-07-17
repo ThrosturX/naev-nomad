@@ -15,6 +15,7 @@ local joyride = require "joyride"
 local parking = require "nomad.parking"
 local retrofit = require "nomad.retrofit"
 local runtime = require "nomad.runtime"
+local unstable_wormhole = require "nomad.wormhole"
 
 local mothership_pilot
 local info_buttons = {}
@@ -25,6 +26,7 @@ local parking_requested
 local parking_request_attempts = 0
 local parking_reuse_record
 local parking_sequence = 0
+local wormhole_sequence = 0
 local departed_cleanup_pending = false
 local pending_sortie_bays
 local pending_bay_transfer
@@ -54,6 +56,41 @@ local carrier_landing_system
 local stored_carrier_bays
 local remove_bay_pilot
 local cancel_pending_parking
+
+local function forget_spob(name)
+   local candidate = spob.get(name)
+   if candidate then candidate:setKnown(false) end
+end
+
+local function forget_wormhole_spobs()
+   for _name_index, name in ipairs({
+      config.wormhole.source_spob,
+      config.wormhole.target_spob,
+   }) do
+      forget_spob(name)
+   end
+end
+
+local function close_wormhole_pair(show_message)
+   local diff_name = mem.nomad.wormhole_diff
+   local was_open = type(diff_name) == "string"
+      and diff.isApplied(diff_name)
+   if type(diff_name) == "string" and diff.isApplied(diff_name) then
+      diff.remove(diff_name)
+   end
+   mem.nomad.wormhole_diff = nil
+   forget_wormhole_spobs()
+   forget_spob(config.parking.spob)
+   if type(diff_name) == "string" and diff.isApplied(diff_name) then
+      tk.msg(_("Wormhole Collapse"),
+         _("Naev did not remove the unstable wormhole movement diff."))
+      return false
+   end
+   if show_message and was_open then
+      player.msg(_("The unstable wormhole collapses as you return aboard the carrier."))
+   end
+   return true
+end
 
 local function craft_state(name)
    return runtime.craft_state(mem.nomad, name)
@@ -684,7 +721,8 @@ local function strip_nomad_carrier_systems()
       if config.general_bays[name] then
          player.outfitAdd(name, 1)
          pilot:outfitRmSlot(id)
-      elseif name == config.operational_core or name == config.shuttle_bay then
+      elseif name == config.operational_core or name == config.shuttle_bay
+         or name == config.wormhole_generator then
          pilot:outfitRmSlot(id)
       end
    end
@@ -1021,6 +1059,112 @@ function nomad_integrated_system_activated(payload)
    end
 end
 
+function nomad_invalid_wormhole_generator(payload)
+   local subject = payload and payload.pilot
+   local id = payload and payload.id
+   if not subject or not id or not subject:exists()
+      or subject:shipvarPeek(config.carrier_shipvar) == true then return end
+   local installed = subject:outfits()[id]
+   if not installed or installed:nameRaw() ~= config.wormhole_generator then
+      return
+   end
+   if subject:outfitRmSlot(id) then
+      player.outfitAdd(config.wormhole_generator, 1)
+      if subject == player.pilot() then
+         player.msg(_("The Unstable Wormhole Generator can only be fitted to the Nomad carrier."))
+      end
+   end
+end
+
+function nomad_wormhole_generator_activated(_payload)
+   if not is_carrier(player.ship()) or player.isLanded() then return end
+   mem.nomad.wormhole_follow_origin = nil
+   local source_system = system.cur()
+   local candidates = unstable_wormhole.destination_candidates(
+      source_system, system.getAll())
+   if #candidates == 0 then
+      player.msg(_("The generator cannot lock onto a suitable nearby system."))
+      return
+   end
+   local target_system = candidates[rnd.rnd(1, #candidates)]
+   local carrier = player.pilot()
+   local source_position = carrier:pos()
+      + vec2.newP(carrier:radius() + config.wormhole.source_offset,
+         carrier:dir())
+   local target_position = vec2.newP(
+      target_system:radius() * config.wormhole.target_radius_fraction,
+      rnd.angle())
+   local source_x, source_y = source_position:get()
+   local target_x, target_y = target_position:get()
+
+   if not close_wormhole_pair(false) then return end
+
+   wormhole_sequence = wormhole_sequence + 1
+   local diff_name = string.format("%s %s %d", config.wormhole.diff,
+      tostring(naev.ticks()), wormhole_sequence)
+   local movement = unstable_wormhole.diff_xml(diff_name,
+      source_system:nameRaw(), target_system:nameRaw(),
+      source_x, source_y, target_x, target_y)
+   local called, applied = pcall(diff.newDynamic, movement)
+   if not called or not applied or not diff.isApplied(diff_name) then
+      if diff.isApplied(diff_name) then diff.remove(diff_name) end
+      tk.msg(_("Wormhole Failure"), tostring(
+         called and _("Naev rejected the wormhole movement diff") or applied))
+      return
+   end
+   mem.nomad.wormhole_diff = diff_name
+   forget_spob(config.parking.spob)
+   for _name_index, name in ipairs({
+      config.wormhole.source_spob,
+      config.wormhole.target_spob,
+   }) do
+      local mouth = spob.get(name)
+      if mouth then mouth:setKnown(true) end
+   end
+   player.msg(string.format(
+      _("An unstable wormhole opens nearby, linked to the %s system."),
+      target_system:name()))
+end
+
+function nomad_wormhole_entering(payload)
+   local origin = payload and payload.origin
+   if type(origin) ~= "string" or not mem.nomad.active_sortie
+      or is_carrier(player.ship()) then return end
+   if mem.nomad.wormhole_follow_origin then return end
+   local ok, paused, reason = pcall(joyride.follow_mothership, false)
+   if not ok or not paused then
+      tk.msg(_("Wormhole Failure"), tostring(ok and reason or paused))
+      return
+   end
+   mem.nomad.wormhole_follow_origin = origin
+   if mothership_pilot and mothership_pilot:exists() then
+      crewmates.release_mothership(config.joyride_client, mothership_pilot)
+   end
+   mothership_pilot = nil
+end
+
+local function restore_wormhole_mothership()
+   local origin = mem.nomad.wormhole_follow_origin
+   local current_system = system.cur()
+   if not origin or not current_system
+      or current_system:nameRaw() ~= origin then return true end
+
+   local called, enabled, reason = pcall(joyride.follow_mothership, true)
+   if not called or not enabled then
+      tk.msg(_("Mothership Return"), tostring(called and reason or enabled))
+      return false
+   end
+   local spawned_ok, spawned = pcall(joyride.spawn_mothership)
+   if not spawned_ok or not spawned then
+      pcall(joyride.follow_mothership, false)
+      tk.msg(_("Mothership Return"), tostring(
+         spawned_ok and _("Joyride did not restore the mothership") or spawned))
+      return false
+   end
+   mem.nomad.wormhole_follow_origin = nil
+   return true
+end
+
 function nomad_bay_configuration_changed()
    if carrier_conversion then return end
    hook.safe("nomad_refresh_bay_configuration")
@@ -1152,8 +1296,7 @@ local function next_parking_diff_name()
 end
 
 local function forget_parked_spob()
-   local target = spob.get(config.parking.spob)
-   if target then target:setKnown(false) end
+   forget_spob(config.parking.spob)
 end
 
 local function parked_diff_apply(record)
@@ -1703,6 +1846,7 @@ register_actions = function()
 end
 
 function nomad_apply_rules()
+   restore_wormhole_mothership()
    local departed = mem.nomad.departed_parking
    if departed and not departed_cleanup_pending and not player.isLanded() then
       departed_cleanup_pending = true
@@ -1914,14 +2058,14 @@ local function finalize_carrier_replacement()
 end
 
 function nomad_joyride_started(payload)
-   runtime.joyride_started(mem.nomad, payload)
    if not payload or payload.client ~= config.joyride_client then return end
+   local spawned = payload.pilot
+   runtime.joyride_started(mem.nomad, payload)
    mem.nomad.active_kind = mem.nomad.active_kind or "virtual"
    mem.nomad.virtual_name = mem.nomad.active_kind == "virtual"
       and player.ship() or nil
    sortie_bays = sortie_bays or pending_sortie_bays or {}
    pending_sortie_bays = nil
-   local spawned = payload.pilot
    if spawned and spawned:exists() then
       mothership_pilot = spawned
       for _, candidate in pairs(bay_pilots) do
@@ -1988,6 +2132,8 @@ end
 function nomad_joyride_ended(payload)
    runtime.joyride_ended(mem.nomad, payload)
    if not payload or payload.client ~= config.joyride_client then return end
+   mem.nomad.wormhole_follow_origin = nil
+   close_wormhole_pair(true)
    -- Joyride has restored the owned carrier at this point. Establish the
    -- Core's complete post-return state regardless of its pre-swap native or
    -- cached state so the next player toggle is always a fresh activation.
@@ -2100,6 +2246,11 @@ local function register_hooks()
    hook.custom("nomad_occupied_bay_removed", "nomad_occupied_bay_removed")
    hook.custom("nomad_integrated_system_activated",
       "nomad_integrated_system_activated")
+   hook.custom("nomad_invalid_wormhole_generator",
+      "nomad_invalid_wormhole_generator")
+   hook.custom("nomad_wormhole_generator_activated",
+      "nomad_wormhole_generator_activated")
+   hook.custom("nomad_wormhole_entering", "nomad_wormhole_entering")
    hooks_installed = true
 end
 
@@ -2141,6 +2292,9 @@ function nomad_initialize()
       shuttle_profile = profile(),
    }), "Nomad requires an available commander")
    player.fleetCapacitySet(config.fleet_capacity)
+   forget_parked_spob()
+   mem.nomad.wormhole_follow_origin = nil
+   close_wormhole_pair(false)
    ensure_carrier_integrated_systems()
    if not player.isLanded() then restore_bay_pilots() end
    ensure_maintenance()
