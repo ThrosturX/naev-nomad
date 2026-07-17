@@ -101,6 +101,9 @@ function create()
    naev.cache().player_mothership = nil
 
    -- Run Nomad's replacement for the default new-pilot setup and intro.
+   -- Nomad supplies its own carrier workflow and starts outside the vanilla
+   -- tutorial scenario, so suppress the generic takeoff/gear hint chain.
+   var.push("tut_disable", true)
    var.push(config.start_chapter_var, starter.chapter or "0")
    naev.eventStart("start_event")
    -- New-player creation does not start ordinary load events. Start the

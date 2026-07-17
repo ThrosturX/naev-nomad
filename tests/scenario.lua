@@ -20,8 +20,8 @@ local raven = config.starter_carriers[3]
 assert(mule.hull == "Mule" and arx.hull == "Soromid Arx"
    and raven.hull == "Raven Starbridge",
    "all three requested carrier starts must remain available")
-assert(arx.chapter == "1" and mule.chapter == nil and raven.chapter == nil,
-   "only the Arx start may begin in Chapter 1")
+assert(arx.chapter == "1",
+   "the Arx start must begin in Chapter 1")
 assert(#arx.roster == 3 and arx.roster[1].hull == "Soromid Copia"
    and arx.roster[2].hull == "Soromid Ira"
    and arx.roster[3].hull == "Soromid Reaver",
@@ -33,8 +33,9 @@ assert(raven.start_system == "Qorel" and raven.home_spob == "Qorellia"
 local parked = read_file("spob/nomad_parked_carrier.xml")
 assert(parked:find("<land/>", 1, true)
    and parked:find("<outfits/>", 1, true)
+   and parked:find("<hide>0.01</hide>", 1, true)
    and parked:find("<space>nomad_invisible</space>", 1, true),
-   "the parked carrier must provide services with its transparent marker")
+   "the parked carrier must provide services without appearing on local maps")
 
 local storage = read_file("ssys/ngc_nomad.xml")
 local ngc2601 = read_file("ssys/ngc2601.xml")
@@ -62,16 +63,21 @@ local small_bay = read_file("outfits/nomad_s_bay.xml")
 local medium_bay = read_file("outfits/nomad_m_bay.xml")
 local large_bay = read_file("outfits/nomad_l_bay.xml")
 local xl_bay = read_file("outfits/nomad_xl_bay.xml")
-assert(core:find("<size>large</size>", 1, true)
+assert(core:find("<size>medium</size>", 1, true)
    and core:find("<mass_mod>100</mass_mod>", 1, true)
    and core:find("<shield_mod>200</shield_mod>", 1, true)
+   and not core:find("<armour_regen>", 1, true)
    and shuttle:find("<size>medium</size>", 1, true),
-   "the physical integrated systems must retain their slot requirements")
+   "integrated systems must fit the Mule's native utility slots")
 assert(small_bay:find("<size>small</size>", 1, true)
    and medium_bay:find("<size>medium</size>", 1, true)
    and large_bay:find("<size>large</size>", 1, true)
-   and xl_bay:find("<size>large</size>", 1, true),
-   "bay outfits must retain their native fighter-bay size requirements")
+   and xl_bay:find("<size>large</size>", 1, true)
+   and small_bay:find("<mass>50</mass>", 1, true)
+   and medium_bay:find("<mass>100</mass>", 1, true)
+   and large_bay:find("<mass>200</mass>", 1, true)
+   and xl_bay:find("<mass>400</mass>", 1, true),
+   "bay outfits must retain their native sizes and physical mass")
 
 package.preload.cinema = function()
    return { on = function() end, off = function() end }

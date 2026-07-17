@@ -2,6 +2,7 @@ local triggered
 local triggers = {}
 local states = {}
 local progress = {}
+local lua_stats = {}
 local shared = {
    nomad_bay_tooltips = { [7] = "Assigned: Needle (Hyena)" },
    nomad_bay_assignments = {
@@ -27,6 +28,7 @@ local pilot_outfit = {
    id = function() return 7 end,
    outfit = function() return outfit end,
    state = function(_, value) states[#states + 1] = value end,
+   set = function(_, name, value) lua_stats[name] = value end,
    progress = function(_, value) progress[#progress + 1] = value end,
 }
 
@@ -87,8 +89,8 @@ triggers = {}
 states = {}
 dofile("outfits/nomad_integrated.lua")
 init(player_pilot, pilot_outfit)
-assert(states[#states] == "off",
-   "integrated systems must initialize in their one-shot off state")
+assert(states[#states] == "off" and lua_stats.armour_regen == 1,
+   "the Core must initialize off with passive armour repair")
 ontoggle(player_pilot, pilot_outfit, true, true)
 assert(triggered.name == "nomad_integrated_system_activated"
    and triggered.payload.action == "park" and triggered.payload.id == 7
@@ -101,7 +103,6 @@ assert(states[#states] == "on" and shared.nomad_integrated_states[7] == "armed",
    "parking must set the operational core on once after activation")
 assert(shared.nomad_parking_core_choices[7] == true,
    "arming must retain the player's enabled Core choice")
-local state_count = #states
 assert(not ontoggle(player_pilot, pilot_outfit, false, false),
    "automatic engine toggles must not be treated as native Core input")
 assert(shared.nomad_parking_core_choices[7] == true,
@@ -111,11 +112,22 @@ assert(not ontoggle(player_pilot, pilot_outfit, "off", true),
 assert(ontoggle(player_pilot, pilot_outfit, false, true),
    "the operational core must allow its native state to be toggled while parking")
 assert(shared.nomad_parking_core_choices[7] == false,
-   "a native Core-off toggle must cancel parking")
+   "a native Core-off toggle must record the parking cancellation")
 shared.nomad_integrated_states[7] = "arming"
 update(player_pilot, pilot_outfit)
-assert(#states == state_count + 1,
+assert(states[#states] == "on",
    "arming updates must restore the Core's rendered native state")
+shared.nomad_integrated_states[7] = "off"
+onremove(player_pilot, pilot_outfit)
+onadd(player_pilot, pilot_outfit)
+init(player_pilot, pilot_outfit)
+assert(states[#states] == "off",
+   "post-return Core initialization must reset its native state")
+local triggers_before_returned_core = #triggers
+ontoggle(player_pilot, pilot_outfit, true, true)
+assert(#triggers == triggers_before_returned_core + 1
+   and triggered.payload.action == "park",
+   "the restored Core must start parking on its first toggle after a shuttle swap")
 shared.nomad_integrated_states[7] = "off"
 integrated_name = "Shuttle Bay"
 ontoggle(player_pilot, pilot_outfit, true, true)

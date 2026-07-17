@@ -77,9 +77,9 @@ candidate_bays = policy.bays_from_slots({
    { id = 2, type = "Weapon", size = "Large", property = "fighter_bay" },
    { id = 3, type = "Weapon", size = "Large", property = "fighter_bay" },
 })
-assert(#candidate_bays == 2 and candidate_bays[1].max_size == 5
-   and candidate_bays[2].max_size == 5,
-   "candidate carriers must expose at most the two default L bays")
+assert(#candidate_bays == 3 and candidate_bays[1].max_size == 5
+   and candidate_bays[3].max_size == 5,
+   "candidate carriers must expose every usable physical fighter-bay slot")
 
 local incumbent = { id = "old", name = "Old Carrier", size = 3,
    bays = { { name = "S", max_size = 2 } } }
@@ -138,6 +138,6 @@ local systems = retrofit.allocate({
    { id = 2, type = "Utility", size = "Large" },
 }, {}, config.integrated_systems)
 assert(#systems == 2 and systems[1].id == 2 and systems[2].id == 1,
-   "carrier conversion must reserve large and medium utility slots")
+   "carrier conversion must prefer the largest slot for the Core")
 
 print("ok - nomad fleet policy")

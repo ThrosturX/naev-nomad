@@ -6,6 +6,7 @@ local comm_close_calls = 0
 local end_joyride_call
 local command_launch_call
 local command_launch_failure
+local player_weapon_sets = {}
 local live_pilots = {}
 local applied_health = {}
 package.preload.joyride = function()
@@ -133,6 +134,22 @@ end
 
 local config = require "nomad.config"
 
+-- Starter flavour is configuration, not part of the Core-installation
+-- contract exercised below. Accept any configured faction, spob, jump, or
+-- pirate-standing setup without making the test depend on its particulars.
+local function known_target()
+   return {
+      setKnown = function() end,
+      setReputationGlobal = function() end,
+   }
+end
+faction = { get = function() return known_target() end }
+spob = { get = function() return known_target() end }
+jump = { get = function() return known_target() end }
+package.preload["common.pirate"] = function()
+   return { updateStandings = function() end }
+end
+
 local start_vars = {}
 local carrier_tag
 local starting_bays = {}
@@ -188,6 +205,7 @@ player = {
    shipvarPush = function(key, value)
       carrier_tag = { key = key, value = value }
    end,
+   teleport = function() end,
    outfitAdd = function(name, quantity)
       starting_inventory[name] = (starting_inventory[name] or 0) + (quantity or 1)
    end,
@@ -225,8 +243,9 @@ player = {
 dofile("events/nomad_start.lua")
 create()
 assert(start_vars[config.active_var] == true
-   and start_vars[config.start_chapter_var] == "0",
-   "Nomad start must mark only newly created pilots")
+   and start_vars[config.start_chapter_var] == "0"
+   and start_vars.tut_disable == true,
+   "Nomad start must mark new pilots and suppress vanilla tutorial hints")
 assert(#chained_events == 3 and chained_events[1] == "start_event"
    and chained_events[2] == config.crewmates_event
    and chained_events[3] == config.handler_event,
@@ -260,7 +279,6 @@ for name, quantity in pairs(config.spare_bays) do
       "new Nomad pilots must receive every configured spare bay control")
 end
 
-starting_choice = 2
 starting_slots = {
    { id = 6, type = "Utility", size = "Large",
       property = "bio_systems" },
@@ -270,13 +288,21 @@ starting_slots = {
    { id = 12, type = "Utility", size = "Large" },
    { id = 13, type = "Utility", size = "Medium" },
 }
-starting_integrated = {}
-starting_slot_outfits = {}
-create()
-assert(#starting_integrated == 1
-   and starting_integrated[1].outfit == config.operational_core
-   and starting_integrated[1].id == 11,
-   "the Arx start must install the Core in its first largest utility slot")
+local every_starter_installs_core = true
+for choice = 1, #config.starter_carriers do
+   starting_choice = choice
+   starting_integrated = {}
+   starting_slot_outfits = {}
+   create()
+   every_starter_installs_core = every_starter_installs_core
+      and #starting_integrated == 1
+      and starting_integrated[1].outfit == config.operational_core
+      and starting_integrated[1].id == 11
+      and starting_integrated[1].bypass_cpu == true
+      and starting_integrated[1].bypass_slot == true
+end
+assert(every_starter_installs_core,
+   "every Nomad carrier start must install the Operational Core")
 starting_choice = 1
 local current_hull = selected_starter.hull
 local carrier_tags = { [selected_starter.hull] = true }
@@ -315,7 +341,11 @@ local restored_position
 local restored_direction
 local restored_velocity
 local inventory_removals = {}
-local inventory_counts = { ["Small Ship Bay"] = 3 }
+local initialized_outfit_slots = {}
+local inventory_counts = {
+   ["Small Ship Bay"] = 3,
+   [config.operational_core] = 1,
+}
 local refunded_credits = 0
 local removed_ship
 local last_player_message
@@ -388,6 +418,9 @@ local current_pilot = {
       installed_outfits[id] = nil
       return true
    end,
+   outfitInitSlot = function(_, id)
+      initialized_outfit_slots[#initialized_outfit_slots + 1] = id
+   end,
    pos = function()
       return {
          get = function() return player_x, player_y end,
@@ -410,7 +443,28 @@ local current_pilot = {
    health = function() return 100, shield end,
    energy = function() return 100 end,
    cargoList = function() return {} end,
-   weapsetList = function() return {} end,
+   weapsetList = function(_, id)
+      local result = {}
+      for _, slot in ipairs(player_weapon_sets[id] or {}) do
+         result[#result + 1] = slot
+      end
+      return result
+   end,
+   weapsetRm = function(_, id, slot)
+      for index, current in ipairs(player_weapon_sets[id] or {}) do
+         if current == slot then
+            table.remove(player_weapon_sets[id], index)
+            return
+         end
+      end
+   end,
+   weapsetAdd = function(_, id, slot)
+      player_weapon_sets[id] = player_weapon_sets[id] or {}
+      for _, current in ipairs(player_weapon_sets[id]) do
+         if current == slot then return end
+      end
+      player_weapon_sets[id][#player_weapon_sets[id] + 1] = slot
+   end,
    stats = function() return {
       shield = shield_capacity, armour = 100, fuel = 100,
    } end,
@@ -553,14 +607,41 @@ player = {
 naev.cache = function() return shared_cache end
 naev.claimTest = function() return true end
 naev.ticks = function() return 12345 end
-local test_system = { nameRaw = function() return current_system_name end }
+local ordinary_spob_denied
+local parked_spob_known
+local ordinary_spob = {
+   nameRaw = function() return "Ordinary Port" end,
+   tags = function() return {} end,
+   getLandDeny = function() return false end,
+   getLandAllow = function() return false end,
+   landDeny = function(_self, denied) ordinary_spob_denied = denied end,
+}
+local wormhole_spob = {
+   nameRaw = function() return "Test Wormhole" end,
+   tags = function() return { wormhole = true } end,
+   landDeny = function() error("wormholes must remain landable") end,
+}
+local parked_spob = {
+   nameRaw = function() return config.parking.spob end,
+   tags = function() return {} end,
+   landDeny = function() error("the temporary berth must remain landable") end,
+   setKnown = function(_self, known) parked_spob_known = known end,
+}
+local test_system = {
+   nameRaw = function() return current_system_name end,
+   spobs = function() return { ordinary_spob, wormhole_spob, parked_spob } end,
+}
 system = { cur = function() return test_system end }
-local parked_spob = { nameRaw = function() return config.parking.spob end }
 spob = {
    get = function(name)
       if name == config.parking.spob then return parked_spob end
    end,
-   cur = function() return current_spob end,
+   cur = function()
+      if not landed then
+         error("Attempting to get landed spob when player not landed")
+      end
+      return current_spob
+   end,
 }
 diff = {
    isApplied = function(name)
@@ -696,8 +777,8 @@ dofile("events/nomad.lua")
 create()
 assert(not explicit_current_shipvar_lookup,
    "the current ship must use shipvarPeek's implicit current-ship form")
-assert(landing_allowed == false and landing_reason:find("cannot land"),
-   "the configured carrier must be prevented from landing")
+assert(landing_allowed == nil and ordinary_spob_denied == true,
+   "the carrier must block ordinary spobs without a system-wide landing override")
 assert(registered.enter == "nomad_apply_rules",
    "carrier landing rules must be restored after jumping")
 assert(registered.jumpout == nil,
@@ -718,11 +799,14 @@ assert(ensured_commander.options.minimum == config.minimum_crew.commander
    and ensured_commander.options.shuttle_profile.client == config.joyride_client
    and ensured_commander.options.shuttle_profile.landable == true,
    "Crewmates must guarantee the configured commander and shuttle")
-assert(fleet_capacity == config.fleet_capacity,
-   "Nomad initialization must restore generous vanilla fleet capacity")
-assert(#installed_outfits == 2 and installed_outfits[1] == "Medium Ship Bay"
-   and installed_outfits[2] == "Small Ship Bay",
-   "Nomad initialization must not continuously retrofit carrier systems")
+assert(fleet_capacity == 0,
+   "Nomad initialization must disable vanilla fleet capacity")
+assert(installed_outfits[1] == "Medium Ship Bay"
+   and installed_outfits[2] == "Small Ship Bay"
+   and installed_outfits[3] == config.shuttle_bay
+   and installed_outfits[4] == config.operational_core
+   and inventory_counts[config.operational_core] == 0,
+   "initialization must repair integrated systems without changing bay controls")
 installed_outfits[1] = "Large Ship Bay"
 nomad_initialize()
 assert(installed_outfits[1] == "Large Ship Bay",
@@ -748,7 +832,7 @@ assert(command_launch_call == config.joyride_client,
 command_launch_call = nil
 nomad_integrated_system_activated { action = "shuttle" }
 assert(command_launch_call == config.joyride_client,
-   "the shuttle bay weapon-set action must use the same command launch path")
+   "the shuttle bay weapon-set action must use the command launch path")
 command_launch_call = nil
 command_launch_failure = "another auxiliary ship is already active"
 shared_cache.joyride = true
@@ -969,6 +1053,8 @@ assert(landed and mem.nomad.parked and diff_applied
    and mem.nomad.parked.x == 321.25 and mem.nomad.parked.y == -654.5
    and dynamic_diff:find('name="Test &amp; System"', 1, true),
    "parking must create the exact dynamic location and land on it")
+assert(parked_spob_known == false,
+   "parking must keep the temporary carrier berth out of map knowledge")
 assert(next(info_actions) == nil,
    "carrier actions must be hidden while the carrier is landed")
 
@@ -1009,10 +1095,19 @@ assert(not mem.nomad.parked and mem.nomad.departed_parking == parked_record
 local cleanup = scheduled_timers[#scheduled_timers]
 assert(cleanup.name == "nomad_remove_departed_parking",
    "successful carrier restoration must schedule stable-space berth cleanup")
+landed = true
 nomad_remove_departed_parking(cleanup.arguments[1], cleanup.arguments[2])
+local cleanup_retry = scheduled_timers[#scheduled_timers]
+assert(diff_applied and mem.nomad.departed_parking == parked_record
+   and cleanup_retry.name == "nomad_remove_departed_parking"
+   and cleanup_retry.arguments[3] == 1,
+   "departure cleanup must retry while Naev still reports the takeoff transition as landed")
+landed = false
+nomad_remove_departed_parking(cleanup_retry.arguments[1],
+   cleanup_retry.arguments[2], cleanup_retry.arguments[3])
 assert(not mem.nomad.parked and not mem.nomad.departed_parking
    and not diff_applied and nojump_value ~= true,
-   "stable-space cleanup must remove the old berth immediately after unpark")
+   "stable-space cleanup must remove the old berth after the takeoff transition")
 current_system_name = "Test & System"
 
 current_hull = selected_starter.hull
@@ -1184,6 +1279,40 @@ nomad_complete_parking()
 nomad_complete_parking()
 assert(not mem.nomad.parked and not diff_applied and not manual_control,
    "turning the operational core off before the first final poll must resume flight")
+
+set_core_choice(true)
+player_vx, player_vy = config.parking.stop_speed + 1, 0
+nomad_park_carrier(99)
+assert(manual_control
+   and shared_cache.nomad_integrated_states[99] == "arming",
+   "Core parking must own the carrier brake until completion or cancellation")
+set_core_choice(false)
+command_launch_call = nil
+local restored_core_slot = physical_id(config.operational_core)
+player_weapon_sets[1] = { 1, restored_core_slot }
+player_weapon_sets[2] = { 2 }
+nomad_integrated_system_activated { action = "shuttle" }
+player_weapon_sets[1] = {}
+player_weapon_sets[2] = {}
+nomad_complete_parking()
+assert(command_launch_call == config.joyride_client
+   and not manual_control and not mem.nomad.parked and not diff_applied
+   and shared_cache.nomad_integrated_states[99] == "off"
+   and initialized_outfit_slots[#initialized_outfit_slots] == 99,
+   "launching the command shuttle must reset the native Core before swapping ships")
+shared_cache.nomad_integrated_states[restored_core_slot] = "armed"
+shared_cache.nomad_parking_core_choices[restored_core_slot] = true
+nomad_joyride_ended({ client = config.joyride_client })
+assert(shared_cache.nomad_integrated_states[restored_core_slot] == "off"
+   and shared_cache.nomad_parking_core_choices[restored_core_slot] == nil
+   and initialized_outfit_slots[#initialized_outfit_slots]
+      == restored_core_slot
+   and player_weapon_sets[1][1] == 1
+   and player_weapon_sets[1][2] == restored_core_slot
+   and player_weapon_sets[2][1] == 2,
+   "boarding the restored Mule must restore its Core state and weapon sets")
+mem.nomad.active_source = nil
+command_launch_call = nil
 shared_cache.nomad_parking_core_choices = nil
 reject_next_diff = true
 nomad_park_carrier()
@@ -1202,6 +1331,8 @@ teleport_call = nil
 nomad_restore_parked_diff()
 assert(not diff_applied and mem.nomad.parked.diff,
    "loading parked must use the statically placed storage spob")
+assert(parked_spob_known == false,
+   "loading must erase parked-carrier locations recorded by older saves")
 landed = false
 current_spob = nil
 nomad_takeoff()
@@ -1214,7 +1345,7 @@ assert(teleport_call.destination == "Reloaded System"
 landing_allowed = nil
 current_hull = "Llama"
 nomad_apply_rules()
-assert(landing_allowed == true,
+assert(landing_allowed == nil and ordinary_spob_denied == false,
    "Nomad must remove only its own carrier landing restriction after a swap")
 assert(next(info_actions) == nil,
    "carrier actions must be hidden while the player controls another ship")
@@ -1405,8 +1536,9 @@ mem.nomad.active_source = nil
 
 current_hull = selected_starter.hull
 current_size = 6
+landing_allowed = nil
 nomad_joyride_ended({ client = config.joyride_client })
-assert(landing_allowed == false,
+assert(landing_allowed == nil and ordinary_spob_denied == true,
    "returning from a Nomad sortie must restore the carrier landing rule")
 assert(released_mothership == config.joyride_client,
    "returning must release the commander from the mothership")

@@ -17,8 +17,12 @@ local function apply_state(pilot_outfit)
 end
 
 function init(subject, pilot_outfit)
-   if subject ~= player.pilot() then return end
    local action = actions[pilot_outfit:outfit():nameRaw()]
+   -- Lua stats are applied independently of a toggleable modification's
+   -- native on/off state. Keep the Core's repair system passive while using
+   -- that native state only to represent an active parking request.
+   if action == "park" then pilot_outfit:set("armour_regen", 1) end
+   if subject ~= player.pilot() then return end
    if action == "park" then
       local shared = naev.cache()
       local choices = shared.nomad_parking_core_choices

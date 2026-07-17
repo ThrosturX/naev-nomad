@@ -111,19 +111,16 @@ end
 
 function policy.bays_from_slots(slots)
    local bays = {}
-   local large_bays = 0
    for index, slot in ipairs(slots or {}) do
       local class = slot_bay_classes[slot.size]
       if slot.type == "Weapon" and slot.property == "fighter_bay"
-         and not slot.locked and class
-         and (slot.size ~= "Large" or large_bays < 2) then
+         and not slot.locked and class then
          bays[#bays + 1] = {
             name = class.name,
             max_size = class.max_size,
             slot_id = slot.id or index,
             slot_size = slot.size,
          }
-         if slot.size == "Large" then large_bays = large_bays + 1 end
       end
    end
    return bays

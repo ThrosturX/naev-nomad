@@ -14,7 +14,9 @@ config.crewmates_event = "Companion Handler000"
 config.handler_event = "Nomad Fleet Handler"
 config.carrier_shipvar = "nomad_carrier"
 config.nojump_shipvar = "nomad_nojump"
-config.fleet_capacity = 10000
+-- Nomad does not use Naev's deployed-fleet system. Ships are carried only by
+-- physical bay controls, so leave vanilla fleet capacity disabled.
+config.fleet_capacity = 0
 config.bay_classes = { S = 2, M = 4, L = 5, XL = 6 }
 
 config.starter_carriers = {
@@ -34,6 +36,7 @@ config.starter_carriers = {
       choice = "Living Fleet — 20,000,000 credits",
       bays = { "Large Ship Bay", "Large Ship Bay", "Medium Ship Bay" },
       chapter = "1",
+      start_system = "Ivella",
       command_shuttle = "Soromid Brigand",
       roster = {
          {
@@ -66,6 +69,7 @@ config.starter_carriers = {
       credits = 350000,
       choice = "Raven Pirate — 350,000 credits",
       bays = { "Medium Ship Bay", "Small Ship Bay" },
+      command_shuttle = "Pirate Hyena",
       start_system = "Qorel",
       home_spob = "Qorellia",
       known_jumps = { "Doowa", "Trask" },
@@ -82,7 +86,7 @@ config.shuttle_bay = "Shuttle Bay"
 config.integrated_systems = {
    {
       outfit = config.operational_core,
-      minimum_size = "Large",
+      minimum_size = "Medium",
       preference = "largest",
    },
    {
@@ -115,7 +119,14 @@ config.general_bays = {
       outfit = "XL Ship Bay", large_bay_points = 2 },
 }
 
-config.large_bay_points = 2
+-- The Operations Core turns the carrier's fighter-bay mounts into a shared
+-- large-bay budget. A large mount contributes one point; medium and small
+-- mounts contribute fractional capacity for the same physical structure.
+config.large_bay_points_by_slot_size = {
+   Small = 0.25,
+   Medium = 0.5,
+   Large = 1,
+}
 
 config.bay_outfit_by_slot_size = {
    Small = "Small Ship Bay",

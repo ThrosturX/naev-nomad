@@ -4,7 +4,7 @@
   <unique/>
   <typename>Nomad Integrated System</typename>
   <slot>utility</slot>
-  <size>large</size>
+  <size>medium</size>
   <mass>0</mass>
   <price>0</price>
   <gfx_store>nomadic_operational_core.avif</gfx_store>
@@ -14,6 +14,5 @@
   <lua>outfits/nomad_integrated.lua</lua>
   <mass_mod>100</mass_mod>
   <shield_mod>200</shield_mod>
-  <armour_regen>1</armour_regen>
  </specific>
 </outfit>

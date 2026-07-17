@@ -92,21 +92,46 @@ local function sorted_bay_slots(physical_slots)
    return sorted
 end
 
+function runtime.large_bay_points(physical_slots)
+   local points = 0
+   for _, slot in pairs(physical_slots or {}) do
+      if slot.type == "Weapon" and slot.property == "fighter_bay"
+         and not slot.locked then
+         points = points
+            + (config.large_bay_points_by_slot_size[slot.size] or 0)
+      end
+   end
+   return points
+end
+
+local function has_fighter_bay_slots(physical_slots)
+   for _, slot in pairs(physical_slots or {}) do
+      if slot.type == "Weapon" and slot.property == "fighter_bay" then
+         return true
+      end
+   end
+   return false
+end
+
 function runtime.invalid_bay_slots(physical_slots)
    local core_installed = false
    for _, slot in pairs(physical_slots or {}) do
       if slot.outfit == config.operational_core then core_installed = true end
    end
 
-   local invalid = {}
+   local invalid, xl_bays = {}, 0
    local points = 0
+   local available_points = runtime.large_bay_points(physical_slots)
+   local capacity_known = has_fighter_bay_slots(physical_slots)
    for _, slot in ipairs(sorted_bay_slots(physical_slots)) do
       local cost = config.general_bays[slot.outfit].large_bay_points or 0
       if cost > 0 and (not core_installed
-         or points + cost > config.large_bay_points) then
+         or (capacity_known and points + cost > available_points)
+         or (slot.outfit == "XL Ship Bay" and xl_bays >= 1)) then
          invalid[#invalid + 1] = slot
       else
          points = points + cost
+         if slot.outfit == "XL Ship Bay" then xl_bays = xl_bays + 1 end
       end
    end
    return invalid

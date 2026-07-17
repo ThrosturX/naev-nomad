@@ -36,6 +36,7 @@ local parking_fleet_backup
 local parking_manual_control = false
 local parking_braking = false
 local parking_brake_hook
+local parking_pilot
 local parking_outfit_id
 local parking_outfit_enabled
 local parking_finalizing = false
@@ -46,9 +47,13 @@ local is_carrier
 local sortie_bays
 local pending_acquisition
 local pending_carrier_replacement
+local mothership_weapon_sets
 local carrier_conversion = false
+local carrier_landing_spobs = {}
+local carrier_landing_system
 local stored_carrier_bays
 local remove_bay_pilot
+local cancel_pending_parking
 
 local function craft_state(name)
    return runtime.craft_state(mem.nomad, name)
@@ -80,6 +85,38 @@ local function set_parking_outfit_state(on)
    local shared = naev.cache()
    shared.nomad_integrated_states = shared.nomad_integrated_states or {}
    shared.nomad_integrated_states[parking_outfit_id] = on and "arming" or "off"
+end
+
+local function reset_integrated_outfit(pilot, outfit_id)
+   if not pilot or not outfit_id then return end
+   -- player.shipSwap runs onremove/onadd but does not rerun outfit init. Reset
+   -- the native slot while this carrier is still the player ship so Joyride
+   -- cannot store an enabled Core and restore it as the next toggle's input.
+   pcall(pilot.outfitInitSlot, pilot, outfit_id)
+end
+
+local function restore_operational_core_state()
+   if not is_carrier(player.ship()) then return end
+   local shared = naev.cache()
+   shared.nomad_integrated_states = shared.nomad_integrated_states or {}
+   local choices = shared.nomad_parking_core_choices
+   local guards = shared.nomad_parking_bay_guards
+   for id, state in pairs(shared.nomad_integrated_states) do
+      if state == "arming" or state == "armed" then
+         shared.nomad_integrated_states[id] = "off"
+      end
+      if choices then choices[id] = nil end
+      if guards then guards[id] = nil end
+   end
+   local pilot = player.pilot()
+   for id, installed in pairs(pilot:outfits()) do
+      if installed and installed:nameRaw() == config.operational_core then
+         shared.nomad_integrated_states[id] = "off"
+         if choices then choices[id] = nil end
+         if guards then guards[id] = nil end
+         reset_integrated_outfit(pilot, id)
+      end
+   end
 end
 
 local function protect_parking_core_from_bay_toggle()
@@ -125,6 +162,30 @@ local function snapshot_outfits(subject, preserve_slots)
    return result
 end
 
+local function snapshot_weapon_sets(subject)
+   local result = {}
+   for id = 1, 10 do
+      result[id] = {}
+      for _, slot in ipairs(subject:weapsetList(id)) do
+         result[id][#result[id] + 1] = slot
+      end
+   end
+   return result
+end
+
+local function restore_weapon_sets(subject, saved)
+   if not saved then return end
+   for id = 1, 10 do
+      local current = subject:weapsetList(id)
+      for _, slot in ipairs(current) do
+         subject:weapsetRm(id, slot)
+      end
+      for _, slot in ipairs(saved[id] or {}) do
+         if subject:outfits()[slot] then subject:weapsetAdd(id, slot) end
+      end
+   end
+end
+
 local function owned_snapshot(entry, name)
    if not entry and name == player.ship() then
       entry = { name = name, ship = player.pilot():ship() }
@@ -163,9 +224,7 @@ local function pilot_snapshot(subject)
          }
       end
    end
-   for id = 1, 10 do
-      snapshot.weapon_sets[id] = subject:weapsetList(id)
-   end
+   snapshot.weapon_sets = snapshot_weapon_sets(subject)
    return snapshot
 end
 
@@ -224,12 +283,27 @@ is_carrier = function(name)
 end
 
 local function physical_bay_slots(subject)
-   local slots = {}
-   for id, outfit in pairs((subject or player.pilot()):outfits()) do
+   subject = subject or player.pilot()
+   local physical = {}
+   for index, slot in ipairs(subject:ship():getSlots()) do
+      local id = slot.id or index
+      physical[id] = {
+         id = id,
+         type = slot.type,
+         size = slot.size,
+         property = slot.property,
+         locked = slot.locked,
+      }
+   end
+   for id, outfit in pairs(subject:outfits()) do
       if outfit then
-         slots[#slots + 1] = { id = id, outfit = outfit:nameRaw() }
+         local slot = physical[id] or { id = id }
+         slot.outfit = outfit:nameRaw()
+         physical[id] = slot
       end
    end
+   local slots = {}
+   for _, slot in pairs(physical) do slots[#slots + 1] = slot end
    return slots
 end
 
@@ -245,11 +319,31 @@ local function current_bays()
 end
 
 stored_carrier_bays = function(name)
-   local slots = {}
+   local physical = {}
+   for _, entry in ipairs(player.ships()) do
+      if entry.name == name then
+         for index, slot in ipairs(entry.ship:getSlots()) do
+            local id = slot.id or index
+            physical[id] = {
+               id = id,
+               type = slot.type,
+               size = slot.size,
+               property = slot.property,
+               locked = slot.locked,
+            }
+         end
+         break
+      end
+   end
    for index, installed in ipairs(player.shipOutfits(name) or {}) do
       local outfit_name = type(installed) == "string"
          and installed or installed:nameRaw()
-      slots[#slots + 1] = { id = index, outfit = outfit_name }
+      physical[index] = physical[index] or { id = index }
+      physical[index].outfit = outfit_name
+   end
+   local slots = {}
+   for _, slot in pairs(physical) do
+      slots[#slots + 1] = slot
    end
    return runtime.general_bays(slots)
 end
@@ -384,19 +478,60 @@ local function apply_mothership_access(violations)
    end
 end
 
-local function apply_carrier_rules()
-   if is_carrier(player.ship()) then
-      if mem.nomad.parked and player.isLanded() then
-         player.landAllow(true)
-         mem.nomad.carrier_land_block = nil
+local function clear_carrier_landing_rules()
+   -- Spob overrides expire when landing or changing systems. In those cases,
+   -- restoring the snapshot would incorrectly resurrect an expired override.
+   if player.isLanded() or carrier_landing_system ~= system.cur() then
+      carrier_landing_spobs = {}
+      carrier_landing_system = nil
+      return
+   end
+   for _, entry in ipairs(carrier_landing_spobs) do
+      if entry.allowed then
+         entry.spob:landAllow(true, entry.allow_message)
+      elseif entry.denied then
+         entry.spob:landDeny(true, entry.deny_message)
       else
-         player.landAllow(false,
-            _("The carrier cannot land normally. Activate the Nomadic Operational Core to park."))
-         mem.nomad.carrier_land_block = true
+         entry.spob:landDeny(false)
       end
-   elseif mem.nomad.carrier_land_block then
+   end
+   carrier_landing_spobs = {}
+   carrier_landing_system = nil
+end
+
+local function apply_carrier_rules()
+   clear_carrier_landing_rules()
+   -- Prototype saves can retain the old system-wide landing block. Remove it
+   -- once, then use only the per-spob rules below.
+   if mem.nomad.carrier_land_block then
       player.landAllow(true)
       mem.nomad.carrier_land_block = nil
+   end
+   if is_carrier(player.ship()) then
+      if mem.nomad.parked and player.isLanded() then
+         return
+      else
+         -- Wormholes are spobs, so a system-wide player.landAllow(false)
+         -- prevents entering them too. Deny each ordinary spob instead and
+         -- leave wormholes (and Nomad's temporary berth) accessible.
+         carrier_landing_system = system.cur()
+         for _index, candidate in ipairs(system.cur():spobs()) do
+            local tags = candidate:tags() or {}
+            if not tags.wormhole and candidate:nameRaw() ~= config.parking.spob then
+               local denied, deny_message = candidate:getLandDeny()
+               local allowed, allow_message = candidate:getLandAllow()
+               carrier_landing_spobs[#carrier_landing_spobs + 1] = {
+                  spob = candidate,
+                  denied = denied,
+                  deny_message = deny_message,
+                  allowed = allowed,
+                  allow_message = allow_message,
+               }
+               candidate:landDeny(true,
+                  _("The carrier cannot land normally. Activate the Nomadic Operational Core to park."))
+            end
+         end
+      end
    end
 end
 
@@ -483,16 +618,23 @@ local function fit_carrier_systems()
       end
    end
 
-   local large_bay_points = 0
+   local large_bay_points = runtime.large_bay_points(slots)
+   local used_large_bay_points = 0
    for index, slot in ipairs(slots) do
       local bay_outfit = config.bay_outfit_by_slot_size[slot.size]
-      if slot.size == "Large" and large_bay_points >= config.large_bay_points then
+      local installed = pilot:outfits()[slot.id or index]
+      if installed and config.general_bays[installed:nameRaw()] then
+         used_large_bay_points = used_large_bay_points
+            + (config.general_bays[installed:nameRaw()].large_bay_points or 0)
+      end
+      if bay_outfit == "Large Ship Bay"
+         and used_large_bay_points + 1 > large_bay_points then
          bay_outfit = nil
       end
       if slot.type == "Weapon" and slot.property == "fighter_bay"
          and not slot.locked then
          local id = slot.id or index
-         local installed = pilot:outfits()[id]
+         installed = pilot:outfits()[id]
          if installed and (not bay_outfit or installed:nameRaw() ~= bay_outfit) then
             player.outfitAdd(installed:nameRaw(), 1)
             pilot:outfitRmSlot(id)
@@ -501,7 +643,33 @@ local function fit_carrier_systems()
             pilot:outfitAddSlot(bay_outfit, id, true, false)
          end
          if bay_outfit == "Large Ship Bay" then
-            large_bay_points = large_bay_points + 1
+            used_large_bay_points = used_large_bay_points + 1
+         end
+      end
+   end
+   carrier_conversion = false
+end
+
+local function ensure_carrier_integrated_systems()
+   if not is_carrier(player.ship()) then return end
+   local pilot = player.pilot()
+   local slots = pilot:ship():getSlots()
+   local equipped = {}
+   for id, installed in pairs(pilot:outfits()) do
+      if installed then equipped[id] = installed:nameRaw() end
+   end
+   local allocations = retrofit.allocate(
+      slots, equipped, config.integrated_systems)
+   carrier_conversion = true
+   for _, allocation in ipairs(allocations) do
+      if not allocation.installed
+         and pilot:outfitAddSlot(allocation.outfit,
+            allocation.id, true, false) then
+         -- Older builds forced a Large Core into the Mule's Medium slot. The
+         -- loader moved that invalid outfit to stock; consume that copy when
+         -- repairing the now-compatible installation.
+         if player.outfitNum(allocation.outfit) > 0 then
+            player.outfitRm(allocation.outfit, 1)
          end
       end
    end
@@ -800,6 +968,10 @@ end
 
 function nomad_launch_command_shuttle()
    if not is_carrier(player.ship()) or player.isLanded() then return end
+   -- A ship swap must never carry an in-progress parking brake or an armed
+   -- Core into Joyride. Cancel while the original carrier is still current.
+   cancel_pending_parking()
+   mothership_weapon_sets = snapshot_weapon_sets(player.pilot())
    pending_sortie_bays = current_bays()
    local previous_source = mem.nomad.active_source
    -- Crewmates starts Joyride synchronously. Mark the source before launching
@@ -810,6 +982,7 @@ function nomad_launch_command_shuttle()
    if ok then
       bay_action_message(_("Launching the commander's shuttle."))
    else
+      mothership_weapon_sets = nil
       pending_sortie_bays = nil
       mem.nomad.active_source = previous_source
       bay_action_message(string.format(_("Command bay: %s"), tostring(reason)))
@@ -932,6 +1105,8 @@ function nomad_begin_owned_joyride(name, expected)
       hook.timer(0.1, "nomad_complete_bay_seat_transfer")
       return
    end
+   cancel_pending_parking()
+   mothership_weapon_sets = snapshot_weapon_sets(player.pilot())
    pending_sortie_bays = current_bays()
    local state = craft_state(name)
    local previous_phase = state.phase
@@ -945,6 +1120,7 @@ function nomad_begin_owned_joyride(name, expected)
    local called, controlled, reason = pcall(joyride.begin_owned_sortie,
       name, template, profile())
    if not called or not controlled then
+      mothership_weapon_sets = nil
       pending_sortie_bays = nil
       state.phase = previous_phase
       bay_pilots[name] = nil
@@ -975,7 +1151,13 @@ local function next_parking_diff_name()
       tostring(naev.ticks()), parking_sequence)
 end
 
+local function forget_parked_spob()
+   local target = spob.get(config.parking.spob)
+   if target then target:setKnown(false) end
+end
+
 local function parked_diff_apply(record)
+   forget_parked_spob()
    if diff.isApplied(record.diff) then return true end
    local ok, applied = pcall(diff.newDynamic, parking.diff_xml(record))
    if not ok then return false, applied end
@@ -994,6 +1176,9 @@ local function parked_diff_remove(record)
    if diff.isApplied(config.parking.diff) then
       diff.remove(config.parking.diff)
    end
+   -- A local map bought in an older build may have persisted the temporary
+   -- location. The carrier berth must never remain part of map knowledge.
+   forget_parked_spob()
 end
 
 local function copy_plain(value)
@@ -1055,8 +1240,10 @@ end
 
 local function parking_release_control(pilot)
    stop_parking_brake_hook()
+   pilot = parking_pilot or pilot
    local outfit_id = parking_outfit_id
    set_parking_outfit_state(false)
+   reset_integrated_outfit(pilot, outfit_id)
    if outfit_id then
       local choices = naev.cache().nomad_parking_core_choices
       if choices then choices[outfit_id] = nil end
@@ -1071,6 +1258,32 @@ local function parking_release_control(pilot)
       pcall(pilot.control, pilot, false)
    end
    parking_braking = false
+   parking_pilot = nil
+end
+
+cancel_pending_parking = function(outfit_id)
+   if outfit_id and parking_outfit_id and outfit_id ~= parking_outfit_id then
+      return
+   end
+   local shared = naev.cache()
+   local pilot = player.pilot()
+   for id, state in pairs(shared.nomad_integrated_states or {}) do
+      if state == "arming" or state == "armed" then
+         shared.nomad_integrated_states[id] = "off"
+         if shared.nomad_parking_core_choices then
+            shared.nomad_parking_core_choices[id] = nil
+         end
+         if shared.nomad_parking_bay_guards then
+            shared.nomad_parking_bay_guards[id] = nil
+         end
+         reset_integrated_outfit(pilot, id)
+      end
+   end
+   if not parking_requested and not parking_outfit_id then return end
+   parking_requested = nil
+   parking_request_attempts = 0
+   parking_reuse_record = nil
+   parking_release_control(player.pilot())
 end
 
 local function parking_brake(pilot)
@@ -1240,6 +1453,7 @@ function nomad_park_carrier(outfit_id)
       return
    end
    parking_outfit_id = outfit_id
+   parking_pilot = player.pilot()
    parking_outfit_enabled = nil
    parking_finalizing = false
    local pilot = player.pilot()
@@ -1301,6 +1515,7 @@ function nomad_landed()
          parking_cleanup_token = parking_cleanup_token + 1
       end
       parking_fleet_backup = nil
+      forget_parked_spob()
    end
    nomad_apply_rules()
 end
@@ -1314,6 +1529,7 @@ function nomad_verify_parking_landing(record)
          departed_cleanup_pending = false
          parking_cleanup_token = parking_cleanup_token + 1
       end
+      forget_parked_spob()
       nomad_apply_rules()
       return
    end
@@ -1326,6 +1542,8 @@ function nomad_verify_parking_landing(record)
 end
 
 function nomad_restore_parked_diff()
+   -- Also migrates saves made after a local map recorded the temporary berth.
+   forget_parked_spob()
    if mem.nomad.parked then
       mem.nomad.parked.diff = mem.nomad.parked.diff
          or next_parking_diff_name()
@@ -1505,8 +1723,14 @@ function nomad_remove_departed_parking(token, record, attempt)
       departed_cleanup_pending = false
       return
    end
-   if player.isLanded() or spob.cur() then
-      departed_cleanup_pending = false
+   if player.isLanded() then
+      attempt = (attempt or 0) + 1
+      if attempt <= 20 then
+         hook.timer(0.25, "nomad_remove_departed_parking",
+            token, record, attempt)
+      else
+         departed_cleanup_pending = false
+      end
       return
    end
    local pilot = player.pilot()
@@ -1764,6 +1988,13 @@ end
 function nomad_joyride_ended(payload)
    runtime.joyride_ended(mem.nomad, payload)
    if not payload or payload.client ~= config.joyride_client then return end
+   -- Joyride has restored the owned carrier at this point. Establish the
+   -- Core's complete post-return state regardless of its pre-swap native or
+   -- cached state so the next player toggle is always a fresh activation.
+   cancel_pending_parking()
+   restore_operational_core_state()
+   restore_weapon_sets(player.pilot(), mothership_weapon_sets)
+   mothership_weapon_sets = nil
    local returned = mem.nomad.controlled_craft
    returned = payload.returned_name or returned
    if returned then
@@ -1910,6 +2141,7 @@ function nomad_initialize()
       shuttle_profile = profile(),
    }), "Nomad requires an available commander")
    player.fleetCapacitySet(config.fleet_capacity)
+   ensure_carrier_integrated_systems()
    if not player.isLanded() then restore_bay_pilots() end
    ensure_maintenance()
    owned_additions(true)

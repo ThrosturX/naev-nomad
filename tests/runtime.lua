@@ -18,25 +18,70 @@ assert(#configured_bays == 2 and configured_bays[1].name == "M"
    "general bays must be derived from installed controls in physical slot order")
 
 local invalid = runtime.invalid_bay_slots {
-   { id = 1, outfit = "Large Ship Bay" },
-   { id = 2, outfit = "Large Ship Bay" },
-   { id = 3, outfit = "XL Ship Bay" },
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "Large Ship Bay" },
+   { id = 2, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "Large Ship Bay" },
+   { id = 3, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "XL Ship Bay" },
    { id = 4, outfit = config.operational_core },
 }
 assert(#invalid == 1 and invalid[1].id == 3,
    "two L bays must consume the entire large-bay budget")
 invalid = runtime.invalid_bay_slots {
-   { id = 1, outfit = "XL Ship Bay" },
-   { id = 2, outfit = "Large Ship Bay" },
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "XL Ship Bay" },
+   { id = 2, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "Large Ship Bay" },
    { id = 3, outfit = config.operational_core },
 }
 assert(#invalid == 1 and invalid[1].id == 2,
    "one XL bay must consume the entire large-bay budget")
 invalid = runtime.invalid_bay_slots {
-   { id = 1, outfit = "Large Ship Bay" },
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "Large Ship Bay" },
 }
 assert(#invalid == 1 and invalid[1].id == 1,
    "L and XL bays must require the operational core")
+invalid = runtime.invalid_bay_slots {
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "XL Ship Bay" },
+   { id = 2, type = "Weapon", size = "Medium", property = "fighter_bay" },
+   { id = 3, type = "Weapon", size = "Medium", property = "fighter_bay" },
+   { id = 4, outfit = config.operational_core },
+}
+assert(#invalid == 0,
+   "one L mount and two M mounts must provide exactly one XL-bay budget")
+invalid = runtime.invalid_bay_slots {
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "XL Ship Bay" },
+   { id = 2, type = "Weapon", size = "Medium", property = "fighter_bay" },
+   { id = 3, type = "Weapon", size = "Medium", property = "fighter_bay" },
+   { id = 4, type = "Weapon", size = "Small", property = "fighter_bay",
+      outfit = "Small Ship Bay" },
+   { id = 5, outfit = config.operational_core },
+}
+assert(#invalid == 0,
+   "non-large bays must not consume the Operations Core's large-bay budget")
+invalid = runtime.invalid_bay_slots {
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "XL Ship Bay" },
+   { id = 2, type = "Weapon", size = "Medium", property = "fighter_bay",
+      outfit = "Large Ship Bay" },
+   { id = 3, type = "Weapon", size = "Medium", property = "fighter_bay" },
+   { id = 4, outfit = config.operational_core },
+}
+assert(#invalid == 1 and invalid[1].id == 2,
+   "an XL bay must consume the entire budget from one L and two M mounts")
+invalid = runtime.invalid_bay_slots {
+   { id = 1, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "XL Ship Bay" },
+   { id = 2, type = "Weapon", size = "Large", property = "fighter_bay",
+      outfit = "XL Ship Bay" },
+   { id = 3, outfit = config.operational_core },
+}
+assert(#invalid == 1 and invalid[1].id == 2,
+   "the Operations Core must never permit more than one XL bay")
 
 local assignments, violations = runtime.audit_fleet({
    { hull = "Admonisher", size = 4 }, { hull = "Shark", size = 2 },

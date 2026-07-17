@@ -15,7 +15,8 @@
  <general>
   <class>0</class>
   <population>0</population>
-  <hide>0</hide>
+  <!-- Keep local system maps from recording this temporary relocation. -->
+  <hide>0.01</hide>
   <services>
    <land/>
    <refuel/>
