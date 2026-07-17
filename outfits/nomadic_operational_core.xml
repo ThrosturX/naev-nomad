@@ -12,7 +12,5 @@
  </general>
  <specific type="modification">
   <lua>outfits/nomad_integrated.lua</lua>
-  <mass_mod>100</mass_mod>
-  <shield_mod>200</shield_mod>
  </specific>
 </outfit>

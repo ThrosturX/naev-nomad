@@ -89,8 +89,11 @@ triggers = {}
 states = {}
 dofile("outfits/nomad_integrated.lua")
 init(player_pilot, pilot_outfit)
-assert(states[#states] == "off" and lua_stats.armour_regen == 1,
-   "the Core must initialize off with passive armour repair")
+assert(states[#states] == "off" and lua_stats.armour_regen == 1
+   and lua_stats.mass_mod == 100 and lua_stats.shield_mod == 200
+   and lua_stats.ew_hide == -80 and lua_stats.ew_stealth == -80
+   and lua_stats.ew_stealth_min == -80,
+   "the Core must initialize off with all bonuses passive")
 ontoggle(player_pilot, pilot_outfit, true, true)
 assert(triggered.name == "nomad_integrated_system_activated"
    and triggered.payload.action == "park" and triggered.payload.id == 7

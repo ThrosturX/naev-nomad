@@ -79,6 +79,26 @@ config.starter_carriers = {
          pirate_value = 20,
       },
    },
+   {
+      hull = "Pirate Rhino",
+      name = "Corsair",
+      acquired = "Your carrier and home among the stars.",
+      credits = 750000,
+      choice = "Rhino Corsair — 750,000 credits",
+      bays = { "Medium Ship Bay", "Medium Ship Bay" },
+      command_shuttle = "Pirate Hyena",
+      start_system = "Fried",
+      home_spob = "Fried IIIa",
+      reputation = {
+         factions = {
+            "Empire", "Dvaered", "Sirius", "Soromid", "Za'lek",
+            "Independent", "Frontier", "Traders Society",
+         },
+         value = -10,
+         pirate_value = 20,
+         pirate_factions = true,
+      },
+   },
 }
 
 config.operational_core = "Nomadic Operational Core"
@@ -162,7 +182,7 @@ config.starter_subship = {
 }
 
 function config.command_shuttle_for(carrier_hull)
-   for _, starter in ipairs(config.starter_carriers) do
+   for _starter_index, starter in ipairs(config.starter_carriers) do
       if starter.hull == carrier_hull and starter.command_shuttle then
          return starter.command_shuttle
       end

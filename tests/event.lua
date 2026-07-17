@@ -88,9 +88,13 @@ package.preload.format = function()
 end
 local toolkit_open = false
 local starting_choice = 1
+local starting_menu
 tk = {
    msg = function() end,
-   choice = function() return starting_choice end,
+   choice = function(...)
+      starting_menu = { ... }
+      return starting_choice
+   end,
    yesno = function() return true end,
    isOpen = function() return toolkit_open end,
 }
@@ -137,17 +141,35 @@ local config = require "nomad.config"
 -- Starter flavour is configuration, not part of the Core-installation
 -- contract exercised below. Accept any configured faction, spob, jump, or
 -- pirate-standing setup without making the test depend on its particulars.
-local function known_target()
+local faction_standings = {}
+local function known_target(name)
    return {
       setKnown = function() end,
-      setReputationGlobal = function() end,
+      setReputationGlobal = function(_, value)
+         faction_standings[name] = value
+      end,
    }
 end
-faction = { get = function() return known_target() end }
+local faction_targets = {}
+local function faction_target(name)
+   faction_targets[name] = faction_targets[name] or known_target(name)
+   return faction_targets[name]
+end
+faction = {
+   get = faction_target,
+}
 spob = { get = function() return known_target() end }
 jump = { get = function() return known_target() end }
+local pirate_standing_update
 package.preload["common.pirate"] = function()
-   return { updateStandings = function() end }
+   return {
+      factions = {
+         faction_target("Pirate"), faction_target("Marauder"),
+         faction_target("Raven Clan"), faction_target("Wild Ones"),
+         faction_target("Dreamer Clan"), faction_target("Black Lotus"),
+      },
+      updateStandings = function(value) pirate_standing_update = value end,
+   }
 end
 
 local start_vars = {}
@@ -242,6 +264,8 @@ player = {
 
 dofile("events/nomad_start.lua")
 create()
+assert(#starting_menu == #config.starter_carriers + 2,
+   "the carrier selector must list every configured start")
 assert(start_vars[config.active_var] == true
    and start_vars[config.start_chapter_var] == "0"
    and start_vars.tut_disable == true,
@@ -303,6 +327,24 @@ for choice = 1, #config.starter_carriers do
 end
 assert(every_starter_installs_core,
    "every Nomad carrier start must install the Operational Core")
+faction_standings = {}
+pirate_standing_update = nil
+starting_choice = 4
+create()
+assert(faction_standings.Empire == -10 and faction_standings.Dvaered == -10
+   and faction_standings.Sirius == -10 and faction_standings.Soromid == -10
+   and faction_standings["Za'lek"] == -10
+   and faction_standings.Independent == -10 and faction_standings.Frontier == -10
+   and faction_standings["Traders Society"] == -10
+   and faction_standings.Pirate == 20 and faction_standings.Marauder == 20
+   and faction_standings["Raven Clan"] == 20
+   and faction_standings["Wild Ones"] == 20
+   and faction_standings["Dreamer Clan"] == 20
+   and faction_standings["Black Lotus"] == 20
+   and faction_standings.Proteron == nil and faction_standings.Thurion == nil
+   and faction_standings.Lost == nil
+   and pirate_standing_update == 20,
+   "the Rhino Corsair start must begin disliked by standard factions but pirates")
 starting_choice = 1
 local current_hull = selected_starter.hull
 local carrier_tags = { [selected_starter.hull] = true }

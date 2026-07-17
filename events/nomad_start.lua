@@ -31,28 +31,47 @@ end
 
 local function apply_starting_flavour(starter)
    if starter.reputation then
-      local home = faction.get(starter.reputation.faction)
-      home:setKnown(true)
-      home:setReputationGlobal(starter.reputation.value)
-      require("common.pirate").updateStandings(
-         starter.reputation.pirate_value)
+      local reputation = starter.reputation
+      local pirate = require "common.pirate"
+      for _faction_index, faction_name in ipairs(reputation.factions or {}) do
+         local standing = faction.get(faction_name)
+         standing:setKnown(true)
+         standing:setReputationGlobal(reputation.value)
+      end
+      if reputation.faction then
+         local home = faction.get(reputation.faction)
+         home:setKnown(true)
+         home:setReputationGlobal(reputation.value)
+      end
+      if reputation.pirate_value then
+         pirate.updateStandings(reputation.pirate_value)
+         if reputation.pirate_factions then
+            for _pirate_index, standing in ipairs(pirate.factions) do
+               standing:setKnown(true)
+               standing:setReputationGlobal(reputation.pirate_value)
+            end
+         end
+      end
    end
    if starter.start_system then
       player.teleport(starter.start_system, true, true)
    end
    if starter.home_spob then spob.get(starter.home_spob):setKnown(true) end
-   for _, destination in ipairs(starter.known_jumps or {}) do
+   for _jump_index, destination in ipairs(starter.known_jumps or {}) do
       jump.get(starter.start_system, destination):setKnown(true)
    end
 end
 
 function create()
+   local choices = {}
+   for index = 1, #config.starter_carriers do
+      local starter = config.starter_carriers[index]
+      choices[#choices + 1] = _(starter.choice)
+   end
    local choice = tk.choice(
       _("Choose Your Nomad Carrier"),
       _("Choose the hull that will become your first home among the stars."),
-      _(config.starter_carriers[1].choice),
-      _(config.starter_carriers[2].choice),
-      _(config.starter_carriers[3].choice)
+      (table.unpack or unpack)(choices)
    )
    local starter = config.starter_carriers[choice]
       or config.starter_carriers[1]
@@ -69,7 +88,7 @@ function create()
    player.shipSwap(carrier_name, true, true)
    player.shipvarPush(config.carrier_shipvar, true)
    player.pay(starter.credits - player.credits())
-   for _, outfit_name in ipairs(starter.bays or config.starter_bays) do
+   for _bay_index, outfit_name in ipairs(starter.bays or config.starter_bays) do
       if player.pilot():outfitAdd(outfit_name) <= 0 then
          player.outfitAdd(outfit_name, 1)
       end
@@ -79,7 +98,7 @@ function create()
    assert(core_slot, "starter carrier has no utility slot for its Core")
    assert(pilot:outfitAddSlot(config.operational_core, core_slot, true, true),
       "unable to install starter carrier Operational Core")
-   for _, system in ipairs(config.integrated_systems) do
+   for _system_index, system in ipairs(config.integrated_systems) do
       if system.outfit ~= config.operational_core
          and pilot:outfitAdd(system.outfit) <= 0 then
          player.outfitAdd(system.outfit, 1)

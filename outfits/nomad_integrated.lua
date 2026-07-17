@@ -3,6 +3,15 @@ local actions = {
    ["Shuttle Bay"] = "shuttle",
 }
 
+local core_passive_stats = {
+   armour_regen = 1,
+   mass_mod = 100,
+   shield_mod = 200,
+   ew_hide = -80,
+   ew_stealth = -80,
+   ew_stealth_min = -80,
+}
+
 local function apply_state(pilot_outfit)
    local shared = naev.cache()
    local states = shared.nomad_integrated_states or {}
@@ -19,9 +28,13 @@ end
 function init(subject, pilot_outfit)
    local action = actions[pilot_outfit:outfit():nameRaw()]
    -- Lua stats are applied independently of a toggleable modification's
-   -- native on/off state. Keep the Core's repair system passive while using
-   -- that native state only to represent an active parking request.
-   if action == "park" then pilot_outfit:set("armour_regen", 1) end
+   -- native on/off state. Keep all Core bonuses passive while using that
+   -- native state only to represent an active parking request.
+   if action == "park" then
+      for stat, value in pairs(core_passive_stats) do
+         pilot_outfit:set(stat, value)
+      end
+   end
    if subject ~= player.pilot() then return end
    if action == "park" then
       local shared = naev.cache()

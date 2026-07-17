@@ -17,9 +17,10 @@ assert(scenario:match('ship_model%s*=%s*"([^"]+)"') == config.bootstrap.hull
 local mule = config.starter_carriers[1]
 local arx = config.starter_carriers[2]
 local raven = config.starter_carriers[3]
+local rhino = config.starter_carriers[4]
 assert(mule.hull == "Mule" and arx.hull == "Soromid Arx"
-   and raven.hull == "Raven Starbridge",
-   "all three requested carrier starts must remain available")
+   and raven.hull == "Raven Starbridge" and rhino.hull == "Pirate Rhino",
+   "all requested carrier starts must remain available")
 assert(arx.chapter == "1",
    "the Arx start must begin in Chapter 1")
 assert(#arx.roster == 3 and arx.roster[1].hull == "Soromid Copia"
@@ -29,6 +30,16 @@ assert(#arx.roster == 3 and arx.roster[1].hull == "Soromid Copia"
 assert(raven.start_system == "Qorel" and raven.home_spob == "Qorellia"
    and raven.reputation.faction == "Raven Clan",
    "the Raven start must retain its regional setup")
+assert(rhino.credits == 750000 and rhino.start_system == "Fried"
+   and rhino.home_spob == "Fried IIIa"
+   and rhino.command_shuttle == "Pirate Hyena"
+   and rhino.reputation.value == -10
+   and rhino.reputation.pirate_value == 20
+   and rhino.reputation.factions[1] == "Empire"
+   and rhino.reputation.factions[8] == "Traders Society"
+   and #rhino.bays == 2 and rhino.bays[1] == "Medium Ship Bay"
+   and rhino.bays[2] == "Medium Ship Bay",
+   "the Rhino Corsair start must retain its pirate Haven setup")
 
 local parked = read_file("spob/nomad_parked_carrier.xml")
 assert(parked:find("<land/>", 1, true)
@@ -64,8 +75,11 @@ local medium_bay = read_file("outfits/nomad_m_bay.xml")
 local large_bay = read_file("outfits/nomad_l_bay.xml")
 local xl_bay = read_file("outfits/nomad_xl_bay.xml")
 assert(core:find("<size>medium</size>", 1, true)
-   and core:find("<mass_mod>100</mass_mod>", 1, true)
-   and core:find("<shield_mod>200</shield_mod>", 1, true)
+   and not core:find("<mass_mod>", 1, true)
+   and not core:find("<shield_mod>", 1, true)
+   and not core:find("<ew_hide>", 1, true)
+   and not core:find("<ew_stealth>", 1, true)
+   and not core:find("<ew_stealth_min>", 1, true)
    and not core:find("<armour_regen>", 1, true)
    and shuttle:find("<size>medium</size>", 1, true),
    "integrated systems must fit the Mule's native utility slots")
