@@ -110,16 +110,17 @@ assert(core:find("<size>medium</size>", 1, true)
    and not core:find("<ew_stealth>", 1, true)
    and not core:find("<ew_stealth_min>", 1, true)
    and not core:find("<armour_regen>", 1, true)
-   and shuttle:find("<size>medium</size>", 1, true),
+   and shuttle:find("<size>medium</size>", 1, true)
+   and shuttle:find("<mass>100</mass>", 1, true),
    "integrated systems must fit the Mule's native utility slots")
 assert(small_bay:find("<size>small</size>", 1, true)
    and medium_bay:find("<size>medium</size>", 1, true)
    and large_bay:find("<size>large</size>", 1, true)
    and xl_bay:find("<size>large</size>", 1, true)
-   and small_bay:find("<mass>50</mass>", 1, true)
-   and medium_bay:find("<mass>100</mass>", 1, true)
+   and small_bay:find("<mass>100</mass>", 1, true)
+   and medium_bay:find("<mass>150</mass>", 1, true)
    and large_bay:find("<mass>200</mass>", 1, true)
-   and xl_bay:find("<mass>400</mass>", 1, true),
+   and xl_bay:find("<mass>350</mass>", 1, true),
    "bay outfits must retain their native sizes and physical mass")
 
 package.preload.cinema = function()

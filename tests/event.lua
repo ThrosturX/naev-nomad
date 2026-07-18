@@ -1773,7 +1773,12 @@ end
 end_joyride_call = nil
 last_player_message = nil
 mem.nomad.active_source = "command"
-shared_cache.joyride = { pilot = mothership, token = 1001 }
+shared_cache.joyride = {
+   profile = { client = config.joyride_client },
+   pilot = mothership,
+   token = 1001,
+   kind = "virtual",
+}
 nomad_hail_mothership()
 assert(end_joyride_call == nil
    and scheduled_timers[#scheduled_timers].name ==
@@ -1784,6 +1789,10 @@ nomad_complete_mothership_hail(hail_timer.arguments[1])
 assert(last_player_message:find("must dock", 1, true),
    "hailing from the command shuttle must not bypass its docking return path")
 
+landed = true
+nomad_landed()
+assert(shared_cache.joyride.follow_mothership == false,
+   "landing during a sortie must pause delayed mothership jump-ins")
 current_hull = "Landed Ship"
 current_size = 2
 mem.nomad.active_kind = "virtual"
@@ -1807,20 +1816,19 @@ mem.nomad.active_kind = "virtual"
 mem.nomad.active_source = "command"
 mem.nomad.controlled_craft = nil
 mem.nomad.virtual_name = "Alpaca"
-shared_cache.joyride = {
-   profile = { client = config.joyride_client },
-   pilot = mothership,
-   token = 1001,
-   kind = "owned",
-   controlled = current_hull,
-}
+shared_cache.joyride.kind = "owned"
+shared_cache.joyride.controlled = current_hull
+shared_cache.joyride.pilot = nil
+landed = false
 nomad_takeoff()
 assert(mem.nomad.active_source == "bay"
    and mem.nomad.active_kind == "owned"
    and mem.nomad.virtual_name == nil
    and mem.nomad.controlled_craft == current_hull
-   and mem.nomad.crafts[current_hull].phase == "controlled",
-   "taking off in an owned ship must recover a stale command-shuttle session")
+   and mem.nomad.crafts[current_hull].phase == "controlled"
+   and shared_cache.joyride.follow_mothership == true
+   and shared_cache.joyride.pilot,
+   "taking off in an owned ship must recover the sortie without jumping the carrier")
 
 -- The following cases exercise independent virtual-sortie boundaries.
 mem.nomad.controlled_craft = nil

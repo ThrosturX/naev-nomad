@@ -56,6 +56,7 @@ local carrier_landing_system
 local stored_carrier_bays
 local remove_bay_pilot
 local cancel_pending_parking
+local landed_mothership_paused = false
 
 local function forget_spob(name)
    local candidate = spob.get(name)
@@ -1131,9 +1132,9 @@ function nomad_wormhole_entering(payload)
    if type(origin) ~= "string" or not mem.nomad.active_sortie
       or is_carrier(player.ship()) then return end
    if mem.nomad.wormhole_follow_origin then return end
-   local ok, paused, reason = pcall(joyride.follow_mothership, false)
-   if not ok or not paused then
-      tk.msg(_("Wormhole Failure"), tostring(ok and reason or paused))
+   local paused, reason = joyride.follow_mothership(false)
+   if not paused then
+      tk.msg(_("Wormhole Failure"), tostring(reason))
       return
    end
    mem.nomad.wormhole_follow_origin = origin
@@ -1149,16 +1150,16 @@ local function restore_wormhole_mothership()
    if not origin or not current_system
       or current_system:nameRaw() ~= origin then return true end
 
-   local called, enabled, reason = pcall(joyride.follow_mothership, true)
-   if not called or not enabled then
-      tk.msg(_("Mothership Return"), tostring(called and reason or enabled))
+   local enabled, reason = joyride.follow_mothership(true)
+   if not enabled then
+      tk.msg(_("Mothership Return"), tostring(reason))
       return false
    end
-   local spawned_ok, spawned = pcall(joyride.spawn_mothership)
-   if not spawned_ok or not spawned then
-      pcall(joyride.follow_mothership, false)
-      tk.msg(_("Mothership Return"), tostring(
-         spawned_ok and _("Joyride did not restore the mothership") or spawned))
+   local spawned = joyride.spawn_mothership()
+   if not spawned then
+      joyride.follow_mothership(false)
+      tk.msg(_("Mothership Return"),
+         _("Joyride did not restore the mothership"))
       return false
    end
    mem.nomad.wormhole_follow_origin = nil
@@ -1261,9 +1262,9 @@ function nomad_begin_owned_joyride(name, expected)
    mem.nomad.controlled_craft = name
    mem.nomad.active_kind = "owned"
    mem.nomad.active_source = "bay"
-   local called, controlled, reason = pcall(joyride.begin_owned_sortie,
+   local controlled, reason = joyride.begin_owned_sortie(
       name, template, profile())
-   if not called or not controlled then
+   if not controlled then
       mothership_weapon_sets = nil
       pending_sortie_bays = nil
       state.phase = previous_phase
@@ -1271,7 +1272,7 @@ function nomad_begin_owned_joyride(name, expected)
       mem.nomad.controlled_craft = previous_craft
       mem.nomad.active_kind = previous_kind
       mem.nomad.active_source = previous_source
-      tk.msg(_("Seat Transfer"), tostring(called and reason or controlled))
+      tk.msg(_("Seat Transfer"), tostring(reason))
       restore_bay_pilots()
       return
    end
@@ -1661,6 +1662,14 @@ function nomad_landed()
       forget_parked_spob()
    end
    nomad_apply_rules()
+   -- Joyride's delayed system-entry callback must not recreate the carrier
+   -- while the player is landed. Besides moving a ship that should remain at
+   -- its saved position, that callback replaces the vector with system.cur(),
+   -- which Naev later interprets as a same-system jump-in origin.
+   if mem.nomad.active_sortie and naev.cache().joyride then
+      local paused = joyride.follow_mothership(false)
+      landed_mothership_paused = paused == true
+   end
 end
 
 function nomad_verify_parking_landing(record)
@@ -1798,6 +1807,17 @@ function nomad_takeoff()
          craft_state(controlled).phase = "controlled"
       end
    end
+   if landed_mothership_paused then
+      local enabled, reason = joyride.follow_mothership(true)
+      local spawned = enabled and joyride.spawn_mothership() or nil
+      if enabled and spawned then
+         landed_mothership_paused = false
+      else
+         joyride.follow_mothership(false)
+         tk.msg(_("Mothership Return"), tostring(reason
+            or _("Joyride did not restore the mothership")))
+      end
+   end
    if mem.nomad.parked then
       if not is_carrier(player.ship()) then
          local record = mem.nomad.parked
@@ -1823,19 +1843,17 @@ function nomad_takeoff()
          mem.nomad.active_source = "bay"
          mem.nomad.virtual_name = nil
          sortie_bays = bays
-         local called
-         called, ok, reason = pcall(joyride.begin_stored_owned_sortie,
+         ok, reason = joyride.begin_stored_owned_sortie(
             record.carrier, profile(), vec2.new(record.x, record.y),
             record.direction)
-         if not called or not ok then
+         if not ok then
             state.phase = previous_phase
             state.prelaunch = nil
             mem.nomad.controlled_craft = previous_craft
             mem.nomad.active_kind = previous_kind
             mem.nomad.active_source = previous_source
             sortie_bays = nil
-            fallback_to_carrier(record, selected,
-               called and reason or ok)
+            fallback_to_carrier(record, selected, reason)
             return
          end
          mem.nomad.parked = nil
@@ -2148,6 +2166,7 @@ end
 function nomad_joyride_ended(payload)
    runtime.joyride_ended(mem.nomad, payload)
    if not payload or payload.client ~= config.joyride_client then return end
+   landed_mothership_paused = false
    mem.nomad.wormhole_follow_origin = nil
    close_wormhole_pair(true)
    -- Joyride has restored the owned carrier at this point. Establish the

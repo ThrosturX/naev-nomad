@@ -8,7 +8,7 @@ local fitting = require "nomad.fitting"
 -- cores replace the named upstream core slots below.
 local starters = {
    ["Mule"] = {
-      mass = 1170, engine_limit = 1400, energy_regen = 23,
+      mass = 1120, engine_limit = 1400, energy_regen = 23,
       energy_drain = 20,
       slots = {
          engines = { mass = 16, engine_limit = 750, energy_drain = 8 },
@@ -18,7 +18,7 @@ local starters = {
       },
    },
    ["Soromid Arx"] = {
-      mass = 5360, engine_limit = 5800, energy_regen = 140,
+      mass = 5310, engine_limit = 5800, energy_regen = 140,
       energy_drain = 56,
    },
    ["Pirate Rhino"] = {
