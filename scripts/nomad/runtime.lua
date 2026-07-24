@@ -228,6 +228,17 @@ function runtime.joyride_ended(state, payload)
    return state
 end
 
+function runtime.joyride_has_returned(joyride_state, current_ship, carrier)
+   if not carrier or type(joyride_state) ~= "table"
+      or type(current_ship) ~= "string" or current_ship == "" then
+      return false
+   end
+   local client = type(joyride_state.profile) == "table"
+      and joyride_state.profile.client or nil
+   return client == config.joyride_client
+      or joyride_state.mothership == current_ship
+end
+
 function runtime.controlled_ship_changed(state, controlled)
    if type(controlled) ~= "string" or controlled == "" then return nil end
    local previous = state.controlled_craft

@@ -158,6 +158,9 @@ package.preload["crewmates.api"] = function()
       launch_commander_shuttle = function(client)
          command_launch_call = client
          if command_launch_failure then return false, command_launch_failure end
+         if naev.cache().joyride then
+            return false, "another auxiliary ship is already active"
+         end
          return true
       end,
    }
@@ -231,13 +234,18 @@ local starting_credits = 30000
 local starting_payment
 local chained_events = {}
 local start_finished
+local starting_cache = {
+   joyride = { mothership = "Previous Pilot" },
+   player_mothership = "Previous Pilot",
+}
+local start_swap_cache_was_clear
 var = {
    push = function(key, value)
       start_vars[key] = value
    end,
 }
 naev = {
-   cache = function() return {} end,
+   cache = function() return starting_cache end,
    eventStart = function(name)
       chained_events[#chained_events + 1] = name
    end,
@@ -269,6 +277,8 @@ player = {
       return name
    end,
    shipSwap = function(name, ignore_cargo, remove)
+      start_swap_cache_was_clear = starting_cache.joyride == nil
+         and starting_cache.player_mothership == nil
       starting_ship_swap = {
          name = name, ignore_cargo = ignore_cargo, remove = remove,
       }
@@ -361,6 +371,8 @@ assert(starting_ship_swap.name == selected_starter.name
    and starting_ship_swap.ignore_cargo == true
    and starting_ship_swap.remove == true,
    "Nomad start must atomically replace the temporary bootstrap hull")
+assert(start_swap_cache_was_clear,
+   "new pilots must discard the previous pilot's Joyride before ship hooks run")
 assert(starting_credits == selected_starter.credits and starting_payment == 0,
    "Nomad start must apply the selected carrier's exact starting funds")
 assert(#starting_install_attempts == 2 and #starting_bays == 3
@@ -450,6 +462,7 @@ local current_hull = selected_starter.hull
 local carrier_tags = { [selected_starter.hull] = true }
 local landing_allowed
 local landing_reason
+local saving_allowed
 local registered = {}
 local current_size = 6
 local nojump_marker
@@ -460,6 +473,7 @@ local installed_outfits = { "Medium Ship Bay", "Small Ship Bay" }
 local carrier_status
 local owned_ships = {}
 local shared_cache = {}
+local triggered_joyride_end
 local deploy_call
 local fleet_capacity
 local landed = false
@@ -636,6 +650,7 @@ player = {
       landing_allowed = allowed
       landing_reason = reason
    end,
+   allowSave = function(allowed) saving_allowed = allowed end,
    shipvarPeek = function(key, name)
       if name == current_hull then explicit_current_shipvar_lookup = true end
       if key == config.carrier_shipvar then
@@ -747,6 +762,11 @@ player = {
 naev.cache = function() return shared_cache end
 naev.claimTest = function() return true end
 naev.ticks = function() return 12345 end
+naev.trigger = function(name, payload)
+   if name ~= "joyride_ended" then return end
+   triggered_joyride_end = payload
+   if nomad_joyride_ended then nomad_joyride_ended(payload) end
+end
 local ordinary_spob_denied
 local parked_spob_known
 local wormhole_spob_known = {}
@@ -1122,6 +1142,26 @@ assert(command_launch_call == config.joyride_client
 command_launch_call = nil
 command_launch_failure = nil
 shared_cache.joyride = nil
+
+mem.nomad.active_sortie = true
+mem.nomad.active_source = "command"
+shared_cache.joyride = {
+   profile = { client = config.joyride_client },
+   mothership = current_hull,
+   kind = "virtual",
+}
+shared_cache.player_mothership = current_hull
+triggered_joyride_end = nil
+info_actions["Launch Shuttle"]()
+assert(command_launch_call == config.joyride_client
+   and shared_cache.joyride == nil
+   and shared_cache.player_mothership == nil
+   and triggered_joyride_end
+   and triggered_joyride_end.client == config.joyride_client
+   and mem.nomad.active_source == "command"
+   and saving_allowed == true,
+   "a carrier must reconcile an impossible cached sortie before command launch")
+command_launch_call = nil
 
 owned_ships = {{
    name = "Needle", deployed = false,

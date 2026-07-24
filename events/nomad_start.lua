@@ -88,6 +88,12 @@ local function apply_starting_flavour(starter)
 end
 
 function create()
+   -- The cache outlives pilots in the same process. Clear the previous
+   -- pilot's auxiliary session before any ship transition can run its hooks
+   -- against the new pilot.
+   naev.cache().joyride = nil
+   naev.cache().player_mothership = nil
+
    local choices = {}
    for index = 1, #config.starter_carriers do
       local starter = config.starter_carriers[index]
@@ -146,11 +152,6 @@ function create()
       player.outfitAdd(outfit_name, quantity)
    end
    apply_starting_flavour(starter)
-
-   -- naev.cache() is process-global. A new pilot created after abandoning a
-   -- previous one must not inherit that pilot's unfinished auxiliary sortie.
-   naev.cache().joyride = nil
-   naev.cache().player_mothership = nil
 
    -- Run Nomad's replacement for the default new-pilot setup and intro.
    -- Nomad supplies its own carrier workflow and starts outside the vanilla

@@ -108,6 +108,21 @@ runtime.joyride_started(state, { client = "nomad" })
 assert(state.active_sortie, "Nomad sorties must be tracked")
 runtime.joyride_ended(state, { client = "nomad" })
 assert(not state.active_sortie, "returning must clear the transient sortie flag")
+assert(runtime.joyride_has_returned({
+      profile = { client = "nomad" },
+      mothership = "Old Carrier",
+   }, "Workhorse", true),
+   "a Nomad Joyride cannot remain active while its carrier is controlled")
+assert(runtime.joyride_has_returned({
+      profile = { client = "other" },
+      mothership = "Workhorse",
+   }, "Workhorse", true),
+   "a Joyride cache has returned when its mothership is the controlled ship")
+assert(not runtime.joyride_has_returned({
+      profile = { client = "other" },
+      mothership = "Workhorse",
+   }, "Shuttle", false),
+   "a controlled auxiliary craft must retain its live Joyride session")
 
 local handoff = {
    active_source = "command",

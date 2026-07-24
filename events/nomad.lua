@@ -761,6 +761,30 @@ local function launch_command_shuttle()
    return crewmates.launch_commander_shuttle(config.joyride_client)
 end
 
+local function reconcile_returned_joyride()
+   local shared = naev.cache()
+   local state = shared.joyride
+   if not runtime.joyride_has_returned(
+         state, player.ship(), is_carrier(player.ship())) then
+      return false
+   end
+
+   local profile = type(state.profile) == "table" and state.profile or {}
+   local client = profile.client or config.joyride_client
+   local returned_kind = state.kind or "virtual"
+   local returned_name = returned_kind == "owned" and state.controlled or nil
+   shared.joyride = nil
+   shared.player_mothership = nil
+   player.allowSave(true)
+   player.landAllow(true)
+   naev.trigger("joyride_ended", {
+      client = client,
+      returned_kind = returned_kind,
+      returned_name = returned_name,
+   })
+   return true
+end
+
 local function live_bay_pilot(name)
    local candidate = bay_pilots[name]
    if candidate and candidate:exists() then return candidate end
@@ -1007,6 +1031,7 @@ end
 
 function nomad_launch_command_shuttle()
    if not is_carrier(player.ship()) or player.isLanded() then return end
+   reconcile_returned_joyride()
    -- A ship swap must never carry an in-progress parking brake or an armed
    -- Core into Joyride. Cancel while the original carrier is still current.
    cancel_pending_parking()
@@ -2312,6 +2337,7 @@ function nomad_initialize()
       return
    end
    initialize_attempts = 0
+   reconcile_returned_joyride()
    -- Saving is disabled during Joyride. If a prior broken session left only
    -- persisted flags behind, no live session can legitimately resume it.
    if mem.nomad.active_sortie and not naev.cache().joyride then
