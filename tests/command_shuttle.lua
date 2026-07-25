@@ -61,4 +61,14 @@ assert(command_shuttle.mission_cargo_quantity({
 }) == 1,
    "mission cargo must reserve capacity without entering the transfer plan")
 
+assert(command_shuttle.fuel_loan(200, 400) == 200,
+   "a shuttle must borrow all available fuel when its tank can hold it")
+assert(command_shuttle.fuel_loan(60, 400) == 60,
+   "a low-fuel carrier must lend the shuttle all available fuel")
+assert(command_shuttle.fuel_loan(500, 80) == 80,
+   "a fuel loan must never exceed shuttle capacity")
+assert(command_shuttle.fuel_loan(-1, 400) == 0
+   and command_shuttle.fuel_loan(100, 0) == 0,
+   "invalid or fuel-free configurations must not create fuel")
+
 print("ok - fallback command shuttle")

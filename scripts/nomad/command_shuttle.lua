@@ -140,4 +140,10 @@ function command_shuttle.cargo_transfer_plan(cargo, capacity)
    return result
 end
 
+function command_shuttle.fuel_loan(available, capacity)
+   available = math.max(0, tonumber(available) or 0)
+   capacity = math.max(0, tonumber(capacity) or 0)
+   return math.min(available, capacity)
+end
+
 return command_shuttle

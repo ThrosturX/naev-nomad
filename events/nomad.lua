@@ -63,6 +63,7 @@ local remove_bay_pilot
 local cancel_pending_parking
 local landed_mothership_paused = false
 local command_mothership_cargo
+local command_fuel_adjustment
 local pending_mission_cargo_reversion
 local mission_cargo_swap_reverting = false
 
@@ -864,6 +865,28 @@ local function launch_command_shuttle()
    return launch_fallback_command_shuttle()
 end
 
+local function fund_command_shuttle(source_fuel)
+   source_fuel = math.max(0, tonumber(source_fuel) or 0)
+   local shuttle = player.pilot()
+   local stats = shuttle:stats()
+   local target = command_shuttle.fuel_loan(source_fuel, stats.fuel_max)
+   local current = math.max(0, tonumber(stats.fuel) or 0)
+   local supplemental = math.max(0, target - current)
+   if supplemental > 0 then shuttle:setFuel(target) end
+   command_fuel_adjustment = {
+      supplemental = supplemental,
+   }
+
+   -- Joyride's spawned pilot is only a representation of the stored carrier.
+   -- Show the same fuel loan there while retaining the explicit adjustment
+   -- needed when Joyride restores the actual owned carrier.
+   local state = naev.cache().joyride
+   local spawned = state and state.pilot or nil
+   if spawned and spawned:exists() then
+      spawned:setFuel(math.max(0, source_fuel - target))
+   end
+end
+
 local function reconcile_returned_joyride()
    local shared = naev.cache()
    local state = shared.joyride
@@ -1141,6 +1164,8 @@ function nomad_launch_command_shuttle()
    mothership_weapon_sets = snapshot_weapon_sets(player.pilot())
    pending_sortie_bays = current_bays()
    command_mothership_cargo = nil
+   command_fuel_adjustment = nil
+   local carrier_fuel = player.pilot():stats().fuel
    local previous_source = mem.nomad.active_source
    -- Crewmates starts Joyride synchronously. Mark the source before launching
    -- so joyride_mothership_spawned cannot mistake this for a returning bay
@@ -1148,11 +1173,18 @@ function nomad_launch_command_shuttle()
    mem.nomad.active_source = "command"
    local ok, reason = launch_command_shuttle()
    if ok then
+      fund_command_shuttle(carrier_fuel)
+      -- Custom Joyride notifications are deferred until the next frame.
+      -- Clear only the carrier's per-spob landing denials synchronously now
+      -- that the controlled pilot is the shuttle. The deferred lifecycle hook
+      -- will perform the complete fleet audit after it marks the sortie live.
+      clear_carrier_landing_rules()
       bay_action_message(_("Launching the commander's shuttle."))
    else
       mothership_weapon_sets = nil
       pending_sortie_bays = nil
       command_mothership_cargo = nil
+      command_fuel_adjustment = nil
       mem.nomad.active_source = previous_source
       bay_action_message(string.format(_("Command bay: %s"), tostring(reason)))
    end
@@ -1810,6 +1842,12 @@ function nomad_landed()
       parking_fleet_backup = nil
       forget_parked_spob()
    end
+   if command_fuel_adjustment
+      and mem.nomad.active_source == "command"
+      and not is_carrier(player.ship()) then
+      command_fuel_adjustment.landed_fuel =
+         math.max(0, tonumber(player.pilot():stats().fuel) or 0)
+   end
    nomad_apply_rules()
    -- Joyride's delayed system-entry callback must not recreate the carrier
    -- while the player is landed. Besides moving a ship that should remain at
@@ -2382,7 +2420,17 @@ function nomad_joyride_ended(payload)
             "The carrier could not restore all commodities after the landed seat transfer."))
       end
    end
+   if command_fuel_adjustment and is_carrier(player.ship()) then
+      local adjustment = -command_fuel_adjustment.supplemental
+      if payload.landed then
+         adjustment = adjustment
+            + (command_fuel_adjustment.landed_fuel or 0)
+      end
+      local carrier = player.pilot()
+      carrier:setFuel(carrier:stats().fuel + adjustment)
+   end
    command_mothership_cargo = nil
+   command_fuel_adjustment = nil
    pending_mission_cargo_reversion = nil
    mem.nomad.command_shuttle_fallback_active = nil
    landed_mothership_paused = false

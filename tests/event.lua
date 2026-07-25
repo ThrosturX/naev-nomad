@@ -7,6 +7,9 @@ local end_joyride_call
 local command_launch_call
 local command_launch_failure
 local fallback_launch_call
+local defer_fallback_started = false
+local simulate_empty_fallback_fuel = false
+local current_hull
 local player_weapon_sets = {}
 local live_pilots = {}
 local applied_health = {}
@@ -14,6 +17,7 @@ local player_cargo
 package.preload.joyride = function()
    return {
       swap_to_subship = function(carrier, template, acquired, profile)
+         local mothership_name = player.ship()
          fallback_launch_call = {
             carrier = carrier,
             hull = template:ship(),
@@ -35,6 +39,9 @@ package.preload.joyride = function()
             exists = function() return true end,
             outfits = function() return {} end,
             setActiveBoard = function() end,
+            setFuel = function(_, fuel)
+               fallback_launch_call.spawned_fuel = fuel
+            end,
             cargoList = function() return spawned_cargo end,
             cargoAdd = function(_, commodity, quantity)
                for _, item in ipairs(spawned_cargo) do
@@ -62,13 +69,17 @@ package.preload.joyride = function()
             end,
          }
          fallback_launch_call.spawned = spawned
+         if simulate_empty_fallback_fuel then
+            player_fuel = 0
+            current_hull = "Command Shuttle Test"
+         end
          naev.cache().joyride = {
             profile = profile,
-            mothership = player.ship(),
+            mothership = mothership_name,
             kind = "virtual",
             pilot = spawned,
          }
-         if nomad_joyride_started then
+         if nomad_joyride_started and not defer_fallback_started then
             nomad_joyride_started {
                client = profile.client,
                pilot = spawned,
@@ -559,7 +570,7 @@ assert(faction_standings.Empire == -10 and faction_standings.Dvaered == -10
    and pirate_standing_update == 20,
    "the Raven Rhino start must apply its configured pirate standings")
 starting_choice = 1
-local current_hull = selected_starter.hull
+current_hull = selected_starter.hull
 local carrier_tags = { [selected_starter.hull] = true }
 local landing_allowed
 local landing_reason
@@ -616,6 +627,9 @@ local player_x, player_y = 321.25, -654.5
 local player_vx, player_vy = 0, 0
 player_cargo = {}
 local player_cargo_capacity = 100
+player_fuel = 100
+local player_fuel_max = 400
+local player_fuel_consumption = 100
 local function player_cargo_free()
    local used = 0
    for _, item in ipairs(player_cargo) do used = used + item.q end
@@ -757,7 +771,9 @@ local current_pilot = {
       player_weapon_sets[id][#player_weapon_sets[id] + 1] = slot
    end,
    stats = function() return {
-      shield = shield_capacity, armour = 100, fuel = 100,
+      shield = shield_capacity, armour = 100, fuel = player_fuel,
+      fuel_max = player_fuel_max,
+      fuel_consumption = player_fuel_consumption,
    } end,
    faction = function() return "Player" end,
    worth = function() return 5000000 end,
@@ -766,7 +782,16 @@ local current_pilot = {
    setVel = function(_, value) restored_velocity = value end,
    setHealth = function() end,
    setEnergy = function() end,
-   setFuel = function() end,
+   setFuel = function(_, fuel)
+      if fuel == true then
+         player_fuel = player_fuel_max
+      elseif fuel == false then
+         player_fuel = 0
+      else
+         player_fuel = math.max(0, math.min(player_fuel_max, fuel))
+      end
+      return player_fuel
+   end,
    navSpobSet = function(_, target) current_spob = target end,
 }
 player = {
@@ -1339,6 +1364,53 @@ nomad_joyride_ended {
    returned_kind = "virtual",
 }
 claim_available = true
+live_pilots = {}
+
+crewmates_api_ready = false
+player_fuel = 200
+simulate_empty_fallback_fuel = true
+defer_fallback_started = true
+ordinary_spob_denied = nil
+nomad_apply_rules()
+assert(ordinary_spob_denied == true,
+   "the carrier must have its ordinary landing restriction before launch")
+fallback_launch_call = nil
+info_actions["Launch Shuttle"]()
+assert(player_fuel == 200 and fallback_launch_call.spawned_fuel == 0,
+   "a fuel-empty fallback shuttle must synchronously take all fuel it can fit")
+assert(ordinary_spob_denied == false,
+   "launch must synchronously clear carrier-only landing restrictions")
+player_fuel = 400
+current_hull = selected_starter.hull
+shared_cache.joyride = nil
+nomad_joyride_ended {
+   client = config.joyride_client,
+   returned_kind = "virtual",
+}
+assert(player_fuel == 200,
+   "space docking must return unused fuel without duplicating the supplement")
+
+player_fuel = 200
+fallback_launch_call = nil
+info_actions["Launch Shuttle"]()
+player_fuel = 40
+landed = true
+nomad_landed()
+current_hull = selected_starter.hull
+player_fuel = 200
+shared_cache.joyride = nil
+nomad_joyride_ended {
+   client = config.joyride_client,
+   returned_kind = "virtual",
+   landed = true,
+}
+assert(player_fuel == 40,
+   "landed return must give back unused borrowed fuel without duplication")
+landed = false
+nomad_apply_rules()
+simulate_empty_fallback_fuel = false
+defer_fallback_started = false
+crewmates_api_ready = true
 live_pilots = {}
 
 local food = { nameRaw = function() return "Food" end }
