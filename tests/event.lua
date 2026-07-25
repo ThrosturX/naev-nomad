@@ -10,6 +10,7 @@ local fallback_launch_call
 local player_weapon_sets = {}
 local live_pilots = {}
 local applied_health = {}
+local player_cargo
 package.preload.joyride = function()
    return {
       swap_to_subship = function(carrier, template, acquired, profile)
@@ -20,11 +21,47 @@ package.preload.joyride = function()
             profile = profile,
          }
          template:rm()
+         local spawned_cargo = {}
+         for index = #(player_cargo or {}), 1, -1 do
+            local item = player_cargo[index]
+            if not item.m then
+               spawned_cargo[#spawned_cargo + 1] = {
+                  c = item.c, q = item.q,
+               }
+               table.remove(player_cargo, index)
+            end
+         end
          local spawned = {
             exists = function() return true end,
             outfits = function() return {} end,
             setActiveBoard = function() end,
+            cargoList = function() return spawned_cargo end,
+            cargoAdd = function(_, commodity, quantity)
+               for _, item in ipairs(spawned_cargo) do
+                  if item.c:nameRaw() == commodity then
+                     item.q = item.q + quantity
+                     return quantity
+                  end
+               end
+               spawned_cargo[#spawned_cargo + 1] = {
+                  c = { nameRaw = function() return commodity end },
+                  q = quantity,
+               }
+               return quantity
+            end,
+            cargoRm = function(_, commodity, quantity)
+               for index, item in ipairs(spawned_cargo) do
+                  if item.c:nameRaw() == commodity then
+                     local removed = math.min(item.q, quantity)
+                     item.q = item.q - removed
+                     if item.q <= 0 then table.remove(spawned_cargo, index) end
+                     return removed
+                  end
+               end
+               return 0
+            end,
          }
+         fallback_launch_call.spawned = spawned
          naev.cache().joyride = {
             profile = profile,
             mothership = player.ship(),
@@ -80,6 +117,7 @@ package.preload.joyride = function()
             pilot = {
                exists = function() return true end,
                outfits = function() return {} end,
+               cargoList = function() return {} end,
                setActiveBoard = function() end,
             },
          }
@@ -97,6 +135,7 @@ package.preload.joyride = function()
             state.pilot = {
                exists = function() return true end,
                outfits = function() return {} end,
+               cargoList = function() return {} end,
                setActiveBoard = function() end,
             }
          end
@@ -119,6 +158,7 @@ package.preload.joyride = function()
          state.pilot = {
             exists = function() return true end,
             outfits = function() return {} end,
+            cargoList = function() return {} end,
             setActiveBoard = function() end,
          }
          if nomad_joyride_started then
@@ -574,6 +614,13 @@ local teleport_call
 local current_system_name = "Test & System"
 local player_x, player_y = 321.25, -654.5
 local player_vx, player_vy = 0, 0
+player_cargo = {}
+local player_cargo_capacity = 100
+local function player_cargo_free()
+   local used = 0
+   for _, item in ipairs(player_cargo) do used = used + item.q end
+   return player_cargo_capacity - used
+end
 mem = {}
 local current_pilot = {
    ship = function()
@@ -657,7 +704,36 @@ local current_pilot = {
    radius = function() return 100 end,
    health = function() return 100, shield end,
    energy = function() return 100 end,
-   cargoList = function() return {} end,
+   cargoList = function() return player_cargo end,
+   cargoFree = player_cargo_free,
+   cargoAdd = function(_, commodity, quantity)
+      for _, item in ipairs(player_cargo) do
+         if not item.m and item.c:nameRaw() == commodity then
+            local added = math.min(quantity, player_cargo_free())
+            item.q = item.q + added
+            return added
+         end
+      end
+      local added = math.min(quantity, player_cargo_free())
+      if added > 0 then
+         player_cargo[#player_cargo + 1] = {
+            c = { nameRaw = function() return commodity end },
+            q = added,
+         }
+      end
+      return added
+   end,
+   cargoRm = function(_, commodity, quantity)
+      for index, item in ipairs(player_cargo) do
+         if not item.m and item.c:nameRaw() == commodity then
+            local removed = math.min(item.q, quantity)
+            item.q = item.q - removed
+            if item.q <= 0 then table.remove(player_cargo, index) end
+            return removed
+         end
+      end
+      return 0
+   end,
    weapsetList = function(_, id)
       local result = {}
       for _, slot in ipairs(player_weapon_sets[id] or {}) do
@@ -821,7 +897,8 @@ player = {
    end,
 }
 naev.cache = function() return shared_cache end
-naev.claimTest = function() return true end
+local claim_available = true
+naev.claimTest = function() return claim_available end
 naev.ticks = function() return 12345 end
 naev.trigger = function(name, payload)
    if name ~= "joyride_ended" then return end
@@ -1011,6 +1088,7 @@ pilot = {
          setEnergy = function() end,
          setFuel = function() end,
          fillAmmo = function() end,
+         cargoFree = function() return 20 end,
          cargoAdd = function() end,
          cargoList = function() return {} end,
          weapsetList = function() return {} end,
@@ -1119,7 +1197,8 @@ assert(diff_applied and mem.nomad.wormhole_diff == current_diff_name
    and wormhole_locations[config.wormhole.target_spob]
       == nearby_system:nameRaw()
    and wormhole_spob_known[config.wormhole.source_spob] == true
-   and wormhole_spob_known[config.wormhole.target_spob] == true,
+   and wormhole_spob_known[config.wormhole.target_spob] == true
+   and current_spob == wormhole_source_spob,
    "generator activation must move both stored endpoints into a live pair: "
       .. tostring(diff_applied) .. " / "
       .. tostring(mem.nomad.wormhole_diff) .. " / "
@@ -1127,6 +1206,7 @@ assert(diff_applied and mem.nomad.wormhole_diff == current_diff_name
       .. tostring(wormhole_locations[config.wormhole.target_spob]) .. " / "
       .. tostring(carrier_status and carrier_status.title) .. ": "
       .. tostring(carrier_status and carrier_status.message))
+current_spob = nil
 local wormhole_origin = current_system_name
 current_hull = "Hyena"
 current_size = 1
@@ -1246,6 +1326,108 @@ nomad_joyride_ended {
 crewmates_api_ready = true
 live_pilots = {}
 
+claim_available = false
+command_launch_call = nil
+fallback_launch_call = nil
+info_actions["Launch Shuttle"]()
+assert(not command_launch_call and fallback_launch_call
+   and mem.nomad.command_shuttle_fallback_active == true,
+   "claimed systems must bypass Crewmates' claim guard with Nomad's fallback")
+shared_cache.joyride = nil
+nomad_joyride_ended {
+   client = config.joyride_client,
+   returned_kind = "virtual",
+}
+claim_available = true
+live_pilots = {}
+
+local food = { nameRaw = function() return "Food" end }
+local family = { nameRaw = function() return "The Space Family" end }
+player_cargo_capacity = 20
+player_cargo = {
+   { c = food, q = 80 },
+   { c = family, q = 1, m = true },
+}
+crewmates_api_ready = false
+fallback_launch_call = nil
+info_actions["Launch Shuttle"]()
+local shuttle_food = 0
+local mothership_food = 0
+for _, item in ipairs(player_cargo) do
+   if not item.m and item.c:nameRaw() == "Food" then shuttle_food = item.q end
+end
+for _, item in ipairs(fallback_launch_call.spawned:cargoList()) do
+   if item.c:nameRaw() == "Food" then mothership_food = item.q end
+end
+assert(shuttle_food == 19 and mothership_food == 61
+   and player_cargo_free() == 0,
+   "fallback launch must reserve mission space and split regular cargo safely")
+player_cargo_capacity = 100
+shared_cache.joyride = nil
+nomad_joyride_ended {
+   client = config.joyride_client,
+   returned_kind = "virtual",
+   landed = true,
+}
+local returned_food = 0
+for _, item in ipairs(player_cargo) do
+   if not item.m and item.c:nameRaw() == "Food" then returned_food = item.q end
+end
+assert(returned_food == 80,
+   "landed command-shuttle return must restore the carrier's hidden commodities")
+player_cargo = {}
+crewmates_api_ready = true
+live_pilots = {}
+
+local saved_owned_ships = owned_ships
+local saved_hull = current_hull
+local saved_joyride = shared_cache.joyride
+local saved_active_kind = mem.nomad.active_kind
+local saved_active_source = mem.nomad.active_source
+local saved_controlled_craft = mem.nomad.controlled_craft
+owned_ships = {
+   {
+      name = "Previous Seat", deployed = false,
+      ship = {
+         nameRaw = function() return "Hyena" end,
+         size = function() return 1 end,
+      },
+   },
+}
+current_hull = "Illicit Seat"
+landed = true
+player_cargo = {
+   { c = family, q = 1, m = true },
+}
+shared_cache.joyride = {
+   profile = { client = config.joyride_client },
+   mothership = saved_hull,
+   controlled = current_hull,
+   kind = "owned",
+   token = 77,
+}
+mem.nomad.active_kind = "owned"
+mem.nomad.active_source = "bay"
+mem.nomad.controlled_craft = current_hull
+nomad_joyride_controlled_changed {
+   client = config.joyride_client,
+   previous = "Previous Seat",
+   controlled = current_hull,
+}
+assert(current_hull == "Previous Seat",
+   "a landed ship selection must be reverted when mission cargo changed seats")
+owned_ships = saved_owned_ships
+current_hull = saved_hull
+shared_cache.joyride = saved_joyride
+mem.nomad.active_kind = saved_active_kind
+mem.nomad.active_source = saved_active_source
+mem.nomad.controlled_craft = saved_controlled_craft
+mem.nomad.crafts["Illicit Seat"] = nil
+mem.nomad.crafts["Previous Seat"] = nil
+player_cargo = {}
+landed = false
+nomad_apply_rules()
+
 mem.nomad.active_sortie = true
 mem.nomad.active_source = "command"
 shared_cache.joyride = {
@@ -1333,6 +1515,13 @@ assert(comm_close_calls == closes_before_hail + 1 and not swap_call
    and #scheduled_timers == timers_before_hail + 1
    and scheduled_timers[#scheduled_timers].name == "nomad_begin_owned_joyride",
    "hailing a bay craft must close the stock escort comm before deferring the swap")
+player_cargo = {
+   { c = family, q = 1, m = true },
+}
+nomad_begin_owned_joyride("Needle", live_pilots[2])
+assert(not swap_call and live_pilots[2]:exists(),
+   "mission cargo must block taking control of a deployed bay ship")
+player_cargo = {}
 nomad_begin_owned_joyride("Needle", live_pilots[2])
 assert(swap_call and swap_call.template == live_pilots[2]
    and not live_pilots[2]:exists()
@@ -1778,6 +1967,7 @@ local mothership = {
    name = "Carrier Pilot",
    exists = function() return true end,
    setActiveBoard = function(_, allowed) mothership_boardable = allowed end,
+   cargoList = function() return {} end,
    outfits = function()
       return {
          [1] = { nameRaw = function() return "Medium Ship Bay" end },

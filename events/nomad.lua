@@ -62,6 +62,9 @@ local stored_carrier_bays
 local remove_bay_pilot
 local cancel_pending_parking
 local landed_mothership_paused = false
+local command_mothership_cargo
+local pending_mission_cargo_reversion
+local mission_cargo_swap_reverting = false
 
 local function forget_spob(name)
    local candidate = spob.get(name)
@@ -766,11 +769,37 @@ local function crewmates_ready()
    return crewmates ~= nil and crewmates.is_ready()
 end
 
-local function launch_fallback_command_shuttle()
-   if not naev.claimTest(system.cur()) then
-      return false, _(
-         "Electromagnetic interference makes it unsafe to launch the command shuttle in this system.")
+local function add_regular_cargo(subject, cargo)
+   local remainder = {}
+   for _item_index, item in ipairs(cargo or {}) do
+      local added = subject:cargoAdd(item.commodity, item.quantity)
+      added = math.max(0, math.floor(tonumber(added) or 0))
+      if added < item.quantity then
+         remainder[#remainder + 1] = {
+            commodity = item.commodity,
+            quantity = item.quantity - added,
+         }
+      end
    end
+   return remainder
+end
+
+local function remove_regular_cargo(subject, cargo)
+   local removed = {}
+   for _item_index, item in ipairs(cargo or {}) do
+      local quantity = subject:cargoRm(item.commodity, item.quantity)
+      quantity = math.max(0, math.floor(tonumber(quantity) or 0))
+      if quantity > 0 then
+         removed[#removed + 1] = {
+            commodity = item.commodity,
+            quantity = quantity,
+         }
+      end
+   end
+   return removed
+end
+
+local function launch_fallback_command_shuttle()
    if naev.cache().joyride then
       return false, _("another auxiliary ship is already active")
    end
@@ -789,6 +818,11 @@ local function launch_fallback_command_shuttle()
    end
    template:setVel(carrier:vel())
    template:setDir(carrier:dir())
+   local cargo = carrier:cargoList()
+   local cargo_capacity = template:cargoFree()
+      - command_shuttle.mission_cargo_quantity(cargo)
+   local launch_cargo = remove_regular_cargo(carrier,
+      command_shuttle.cargo_transfer_plan(cargo, cargo_capacity))
    local acquired = fmt.f(
       _("The command shuttle bay of your {mothership}."),
       { mothership = player.ship() })
@@ -798,14 +832,32 @@ local function launch_fallback_command_shuttle()
       command_shuttle.profile(config.joyride_profile, saved))
    if not controlled then
       mem.nomad.command_shuttle_fallback_active = nil
+      add_regular_cargo(player.pilot(), launch_cargo)
       if template:exists() then template:rm() end
       return false, reason or _("the command shuttle could not launch")
+   end
+   local remainder = add_regular_cargo(controlled, launch_cargo)
+   if #remainder > 0 and mothership_pilot and mothership_pilot:exists() then
+      remainder = add_regular_cargo(mothership_pilot, remainder)
+   end
+   if mothership_pilot and mothership_pilot:exists() then
+      command_mothership_cargo = command_shuttle.regular_cargo(
+         mothership_pilot:cargoList())
+   end
+   if #remainder > 0 then
+      player.msg(_(
+         "The command shuttle could not accept all reserved cargo; some commodities remain unavailable until it returns."))
    end
    return true
 end
 
 local function launch_command_shuttle()
-   if crewmates_registered and crewmates_ready() then
+   -- Crewmates treats mission claims as a hard shuttle-launch restriction.
+   -- Nomad cannot obey that restriction because its carrier cannot land at
+   -- ordinary mission destinations. Use Nomad's explicit-position Joyride
+   -- fallback in claimed systems; claims are not mutated or acquired here.
+   if naev.claimTest(system.cur())
+      and crewmates_registered and crewmates_ready() then
       mem.nomad.command_shuttle_fallback_active = nil
       return crewmates.launch_commander_shuttle(config.joyride_client)
    end
@@ -1088,6 +1140,7 @@ function nomad_launch_command_shuttle()
    cancel_pending_parking()
    mothership_weapon_sets = snapshot_weapon_sets(player.pilot())
    pending_sortie_bays = current_bays()
+   command_mothership_cargo = nil
    local previous_source = mem.nomad.active_source
    -- Crewmates starts Joyride synchronously. Mark the source before launching
    -- so joyride_mothership_spawned cannot mistake this for a returning bay
@@ -1099,6 +1152,7 @@ function nomad_launch_command_shuttle()
    else
       mothership_weapon_sets = nil
       pending_sortie_bays = nil
+      command_mothership_cargo = nil
       mem.nomad.active_source = previous_source
       bay_action_message(string.format(_("Command bay: %s"), tostring(reason)))
    end
@@ -1191,12 +1245,23 @@ function nomad_wormhole_generator_activated(_payload)
    end
    mem.nomad.wormhole_diff = diff_name
    forget_spob(config.parking.spob)
+   local source_mouth
    for _name_index, name in ipairs({
       config.wormhole.source_spob,
       config.wormhole.target_spob,
    }) do
       local mouth = spob.get(name)
-      if mouth then mouth:setKnown(true) end
+      if mouth then
+         mouth:setKnown(true)
+         if name == config.wormhole.source_spob then source_mouth = mouth end
+      end
+   end
+   if source_mouth then
+      local mouth_system = source_mouth:system()
+      if mouth_system
+         and mouth_system:nameRaw() == source_system:nameRaw() then
+         carrier:navSpobSet(source_mouth)
+      end
    end
    player.msg(string.format(
       _("An unstable wormhole opens nearby, linked to the %s system."),
@@ -1295,6 +1360,12 @@ function nomad_begin_owned_joyride(name, expected)
    -- comm backend dereference a pilot that no longer exists.
    local template = live_bay_pilot(name)
    if not template or (expected and template ~= expected) then return end
+   if command_shuttle.mission_cargo_quantity(
+         player.pilot():cargoList()) > 0 then
+      tk.msg(_("Seat Transfer"),
+         _("Mission cargo prevents changing seats."))
+      return
+   end
    if naev.cache().joyride then
       if mem.nomad.active_source ~= "bay" then
          tk.msg(_("Seat Transfer"), _(
@@ -2182,6 +2253,10 @@ function nomad_joyride_started(payload)
    pending_sortie_bays = nil
    if spawned and spawned:exists() then
       mothership_pilot = spawned
+      if mem.nomad.active_source == "command" then
+         command_mothership_cargo = command_shuttle.regular_cargo(
+            spawned:cargoList())
+      end
       for _, candidate in pairs(bay_pilots) do
          if candidate:exists() then candidate:setLeader(spawned) end
       end
@@ -2241,6 +2316,48 @@ function nomad_joyride_controlled_changed(payload)
    end
    craft_state(payload.controlled).phase = "controlled"
    apply_rules(false)
+   if not mission_cargo_swap_reverting and player.isLanded()
+      and command_shuttle.mission_cargo_quantity(
+         player.pilot():cargoList()) > 0 then
+      local state = naev.cache().joyride
+      local return_name = payload.previous
+      if not find_owned(return_name) then
+         return_name = state and state.mothership or nil
+      end
+      if return_name and return_name ~= payload.controlled then
+         pending_mission_cargo_reversion = {
+            controlled = payload.controlled,
+            return_name = return_name,
+            token = state and state.token or nil,
+         }
+         hook.safe("nomad_revert_mission_cargo_swap",
+            pending_mission_cargo_reversion)
+      end
+   end
+end
+
+function nomad_revert_mission_cargo_swap(request)
+   if request ~= pending_mission_cargo_reversion then return end
+   pending_mission_cargo_reversion = nil
+   local state = naev.cache().joyride
+   if not state or not player.isLanded()
+      or player.ship() ~= request.controlled
+      or (request.token and state.token ~= request.token)
+      or not find_owned(request.return_name)
+      or command_shuttle.mission_cargo_quantity(
+         player.pilot():cargoList()) <= 0 then
+      return
+   end
+   mission_cargo_swap_reverting = true
+   local swapped = pcall(player.shipSwap,
+      request.return_name, false, false)
+   mission_cargo_swap_reverting = false
+   if swapped and player.ship() == request.return_name then
+      player.msg(_("Mission cargo prevents changing seats."))
+   else
+      tk.msg(_("Seat Transfer"), _(
+         "Mission cargo is aboard the wrong ship and the original seat could not be restored. Do not take off; return to the carrier through the Equipment screen."))
+   end
 end
 
 function nomad_mothership_restored(payload)
@@ -2256,6 +2373,17 @@ function nomad_joyride_ended(payload)
       mem.nomad.command_shuttle = command_shuttle.record(
          mem.nomad.command_shuttle, payload)
    end
+   if payload.landed and command_mothership_cargo
+      and is_carrier(player.ship()) then
+      local remainder = add_regular_cargo(
+         player.pilot(), command_mothership_cargo)
+      if #remainder > 0 then
+         tk.msg(_("Cargo Transfer Incomplete"), _(
+            "The carrier could not restore all commodities after the landed seat transfer."))
+      end
+   end
+   command_mothership_cargo = nil
+   pending_mission_cargo_reversion = nil
    mem.nomad.command_shuttle_fallback_active = nil
    landed_mothership_paused = false
    mem.nomad.wormhole_follow_origin = nil

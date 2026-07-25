@@ -46,4 +46,19 @@ command_shuttle.ensure(saved, "Alpaca")
 assert(saved.virtual_state == nil,
    "fallback state validation must discard non-persistent runtime values")
 
+local food = { nameRaw = function() return "Food" end }
+local plan = command_shuttle.cargo_transfer_plan({
+   { c = food, q = 80 },
+   { c = { nameRaw = function() return "Ore" end }, q = 5 },
+   { c = { nameRaw = function() return "Mission Parcel" end }, q = 1, m = true },
+}, 19)
+assert(#plan == 1 and plan[1].commodity == "Food"
+   and plan[1].quantity == 19,
+   "fallback shuttle cargo must fill only its capacity with regular cargo")
+assert(command_shuttle.mission_cargo_quantity({
+   { c = food, q = 80 },
+   { c = food, q = 1, m = true },
+}) == 1,
+   "mission cargo must reserve capacity without entering the transfer plan")
+
 print("ok - fallback command shuttle")

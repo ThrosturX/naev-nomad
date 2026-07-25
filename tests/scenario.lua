@@ -105,8 +105,10 @@ assert(storage:find("<spob>" .. config.wormhole.source_spob
    and storage:find("<spob>" .. config.wormhole.target_spob
       .. "</spob>", 1, true)
    and wormhole_alpha:find("<tag>wormhole</tag>", 1, true)
-   and wormhole_beta:find("<tag>wormhole</tag>", 1, true),
-   "both wormhole mouths must permanently exist in the storage system")
+   and wormhole_beta:find("<tag>wormhole</tag>", 1, true)
+   and wormhole_alpha:find("<hide>1</hide>", 1, true)
+   and wormhole_beta:find("<hide>1</hide>", 1, true),
+   "both wormhole mouths must exist in storage and remain discoverable")
 assert(wormhole_alpha:find('<pos x="700" y="200"/>', 1, true)
    and wormhole_beta:find('<pos x="700" y="-200"/>', 1, true),
    "stored wormhole mouths must retain functional initialization positions")
