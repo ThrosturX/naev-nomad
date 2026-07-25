@@ -33,6 +33,35 @@ config.starter_carriers = {
       },
    },
    {
+      hull = "Pirate Rhino",
+      name = "Corsair",
+      acquired = "Your carrier and home among the stars.",
+      credits = 750000,
+      choice = "Raven Rhino — 750,000 credits",
+      bays = { "Medium Ship Bay", "Medium Ship Bay" },
+      command_shuttle = "Pirate Hyena",
+      start_system = "Qorel",
+      home_spob = "Qorellia",
+      known_jumps = { "Doowa", "Trask" },
+      core_outfits = {
+         { name = "Melendez Buffalo Engine",
+            slots = { "engines", "engines_secondary" } },
+         { name = "Unicorp PT-200 Core System",
+            slots = { "systems", "systems_secondary" } },
+      },
+      reputation = {
+         faction = "Raven Clan",
+         faction_value = 20,
+         factions = {
+            "Empire", "Dvaered", "Sirius", "Soromid", "Za'lek",
+            "Independent", "Frontier", "Traders Society",
+         },
+         value = -10,
+         pirate_value = 20,
+         pirate_factions = true,
+      },
+   },
+   {
       hull = "Soromid Arx",
       name = "Muoiyja",
       acquired = "Your carrier and home among the stars.",
@@ -63,36 +92,48 @@ config.starter_carriers = {
          },
       },
    },
+}
+
+config.optional_starter_carriers = {
    {
-      hull = "Pirate Rhino",
-      name = "Corsair",
-      acquired = "Your carrier and home among the stars.",
-      credits = 750000,
-      choice = "Raven Rhino — 750,000 credits",
-      bays = { "Medium Ship Bay", "Medium Ship Bay" },
-      command_shuttle = "Pirate Hyena",
-      start_system = "Qorel",
-      home_spob = "Qorellia",
-      known_jumps = { "Doowa", "Trask" },
-      core_outfits = {
-         { name = "Melendez Buffalo Engine",
-            slots = { "engines", "engines_secondary" } },
-         { name = "Unicorp PT-200 Core System",
-            slots = { "systems", "systems_secondary" } },
-      },
-      reputation = {
-         faction = "Raven Clan",
-         faction_value = 20,
-         factions = {
-            "Empire", "Dvaered", "Sirius", "Soromid", "Za'lek",
-            "Independent", "Frontier", "Traders Society",
+      hull = "Soromid Vox Carrier",
+      name = "Outgrowth",
+      acquired = "A mutated battleship grown into a compact Nomad carrier.",
+      credits = 10000000,
+      choice = "Mutated Vox — 10,000,000 credits",
+      bays = { "Large Ship Bay", "Large Ship Bay" },
+      chapter = "1",
+      start_system = "Octantis",
+      command_shuttle = "Soromid Brigand",
+      roster = {
+         {
+            hull = "Soromid Odium",
+            name = "Far-Reaching Claw",
+            acquired = "A versatile corvette carried by your mutated home.",
+            size = 3,
          },
-         value = -10,
-         pirate_value = 20,
-         pirate_factions = true,
+         {
+            hull = "Soromid Marauder",
+            name = "Venom Seed",
+            acquired = "A strike bomber carried by your mutated home.",
+            size = 2,
+         },
       },
    },
 }
+
+function config.available_starter_carriers(include_optional)
+   local result = {}
+   for _, starter in ipairs(config.starter_carriers) do
+      result[#result + 1] = starter
+   end
+   if include_optional then
+      for _, starter in ipairs(config.optional_starter_carriers) do
+         result[#result + 1] = starter
+      end
+   end
+   return result
+end
 
 config.operational_core = "Nomadic Operational Core"
 config.shuttle_bay = "Shuttle Bay"
@@ -186,7 +227,8 @@ config.starter_subship = {
 }
 
 function config.command_shuttle_for(carrier_hull)
-   for _starter_index, starter in ipairs(config.starter_carriers) do
+   for _starter_index, starter in ipairs(
+         config.available_starter_carriers(true)) do
       if starter.hull == carrier_hull and starter.command_shuttle then
          return starter.command_shuttle
       end

@@ -1,4 +1,4 @@
-scenario_name = "Nomad"
+scenario_name = "Sea of Isolation"
 ship_name = "Nomad Bootstrap"
 ship_acquired = "Temporary hull used while initializing the Nomad carrier."
 ship_model = "Llama"

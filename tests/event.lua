@@ -6,11 +6,39 @@ local comm_close_calls = 0
 local end_joyride_call
 local command_launch_call
 local command_launch_failure
+local fallback_launch_call
 local player_weapon_sets = {}
 local live_pilots = {}
 local applied_health = {}
 package.preload.joyride = function()
    return {
+      swap_to_subship = function(carrier, template, acquired, profile)
+         fallback_launch_call = {
+            carrier = carrier,
+            hull = template:ship(),
+            acquired = acquired,
+            profile = profile,
+         }
+         template:rm()
+         local spawned = {
+            exists = function() return true end,
+            outfits = function() return {} end,
+            setActiveBoard = function() end,
+         }
+         naev.cache().joyride = {
+            profile = profile,
+            mothership = player.ship(),
+            kind = "virtual",
+            pilot = spawned,
+         }
+         if nomad_joyride_started then
+            nomad_joyride_started {
+               client = profile.client,
+               pilot = spawned,
+            }
+         end
+         return player.pilot()
+      end,
       begin_owned_sortie = function(name, template, profile)
          swap_call = {
             name = name, template = template, profile = profile,
@@ -103,6 +131,13 @@ package.preload.joyride = function()
       end,
    }
 end
+package.preload["bioship.skills"] = function()
+   return {
+      set = {
+         instinct = { ["hunting instinct"] = {} },
+      },
+   }
+end
 package.preload.format = function()
    return {
       credits = function(amount) return tostring(amount) .. " credits" end,
@@ -129,6 +164,7 @@ _ = function(message) return message end
 
 local ensured_commander
 local ensure_commander_calls = 0
+local crewmates_api_ready = true
 local attached_mothership
 local released_mothership
 local mothership_boardable
@@ -139,7 +175,7 @@ local commander = {
 }
 package.preload["crewmates.api"] = function()
    return {
-      is_ready = function() return true end,
+      is_ready = function() return crewmates_api_ready end,
       ensure_commander = function(client, options)
          ensure_commander_calls = ensure_commander_calls + 1
          ensured_commander = { client = client, options = options }
@@ -229,6 +265,7 @@ local starting_slots = {
 }
 local starting_inventory = {}
 local starting_ship_add
+local starting_ship_adds = {}
 local starting_ship_swap
 local starting_credits = 30000
 local starting_payment
@@ -274,6 +311,7 @@ player = {
       starting_ship_add = {
          hull = hull, name = name, acquired = acquired, noname = noname,
       }
+      starting_ship_adds[#starting_ship_adds + 1] = starting_ship_add
       return name
    end,
    shipSwap = function(name, ignore_cargo, remove)
@@ -347,6 +385,16 @@ player = {
    end,
 }
 
+local variant_hull_available = false
+ship = {
+   exists = function(name)
+      if variant_hull_available
+         and name == config.optional_starter_carriers[1].hull then
+         return {}
+      end
+   end,
+}
+
 dofile("events/nomad_start.lua")
 create()
 assert(#starting_menu == #config.starter_carriers + 2,
@@ -355,10 +403,9 @@ assert(start_vars[config.active_var] == true
    and start_vars[config.start_chapter_var] == "0"
    and start_vars.tut_disable == true,
    "Nomad start must mark new pilots and suppress vanilla tutorial hints")
-assert(#chained_events == 3 and chained_events[1] == "start_event"
-   and chained_events[2] == config.crewmates_event
-   and chained_events[3] == config.handler_event,
-   "Nomad start must initialize Crewmates before its persistent handler")
+assert(#chained_events == 2 and chained_events[1] == "start_event"
+   and chained_events[2] == config.handler_event,
+   "Nomad start must defer optional integrations to its persistent handler")
 assert(start_finished == true, "Nomad start marker event must finish successfully")
 assert(carrier_tag.key == config.carrier_shipvar and carrier_tag.value == true,
    "Nomad start must tag the actual owned carrier")
@@ -439,9 +486,23 @@ for choice = 1, #config.starter_carriers do
 end
 assert(every_starter_installs_core,
    "every Nomad carrier start must install the Operational Core")
+variant_hull_available = true
+starting_choice = #config.starter_carriers + 1
+local additions_before_vox = #starting_ship_adds
+create()
+local vox_starter = config.optional_starter_carriers[1]
+local vox_addition = starting_ship_adds[additions_before_vox + 1]
+assert(#starting_menu == #config.starter_carriers + 3
+   and starting_menu[#starting_menu] == vox_starter.choice
+   and vox_addition.hull == vox_starter.hull
+   and starting_ship_swap.name == vox_starter.name,
+   "the More Variants hull must append and launch the mutated Vox start")
+variant_hull_available = false
 faction_standings = {}
 pirate_standing_update = nil
-starting_choice = 3
+for index, starter in ipairs(config.starter_carriers) do
+   if starter.hull == "Pirate Rhino" then starting_choice = index end
+end
 create()
 assert(faction_standings.Empire == -10 and faction_standings.Dvaered == -10
    and faction_standings.Sirius == -10 and faction_standings.Soromid == -10
@@ -1142,6 +1203,48 @@ assert(command_launch_call == config.joyride_client
 command_launch_call = nil
 command_launch_failure = nil
 shared_cache.joyride = nil
+
+crewmates_api_ready = false
+fallback_launch_call = nil
+local attachment_before_fallback = attached_mothership
+info_actions["Launch Shuttle"]()
+assert(fallback_launch_call
+   and fallback_launch_call.hull == config.starter_subship.hull
+   and fallback_launch_call.profile.client == config.joyride_client
+   and fallback_launch_call.profile.persist_virtual_state == true
+   and mem.nomad.command_shuttle_fallback_active == true
+   and attached_mothership == attachment_before_fallback,
+   "an unavailable Crewmates provider must launch a persistent Joyride shuttle")
+local saved_virtual_state = {
+   hull = config.starter_subship.hull,
+   outfits = { slots = { [1] = "Light Combat Plating" } },
+   shipvars = { bioshipexp = 42 },
+}
+shared_cache.joyride = nil
+nomad_joyride_ended {
+   client = config.joyride_client,
+   returned_kind = "virtual",
+   hull = config.starter_subship.hull,
+   virtual_state = saved_virtual_state,
+}
+assert(mem.nomad.command_shuttle.hull == config.starter_subship.hull
+   and mem.nomad.command_shuttle.virtual_state == saved_virtual_state
+   and mem.nomad.command_shuttle_fallback_active == nil,
+   "fallback docking must persist only Joyride's plain shuttle snapshot")
+fallback_launch_call = nil
+info_actions["Launch Shuttle"]()
+assert(fallback_launch_call
+   and fallback_launch_call.profile.virtual_state == saved_virtual_state,
+   "later fallback launches must restore the saved shuttle fittings and state")
+shared_cache.joyride = nil
+nomad_joyride_ended {
+   client = config.joyride_client,
+   returned_kind = "virtual",
+   hull = config.starter_subship.hull,
+   virtual_state = saved_virtual_state,
+}
+crewmates_api_ready = true
+live_pilots = {}
 
 mem.nomad.active_sortie = true
 mem.nomad.active_source = "command"

@@ -9,14 +9,16 @@
 --]]
 
 local config = require "nomad.config"
-local crewmates = require "crewmates.api"
+local command_shuttle = require "nomad.command_shuttle"
 local fmt = require "format"
 local joyride = require "joyride"
+local optional_crewmates = require "nomad.optional_crewmates"
 local parking = require "nomad.parking"
 local retrofit = require "nomad.retrofit"
 local runtime = require "nomad.runtime"
 local unstable_wormhole = require "nomad.wormhole"
 
+local crewmates = optional_crewmates.api
 local mothership_pilot
 local info_buttons = {}
 local bay_pilots = {}
@@ -34,6 +36,9 @@ local pending_return_to_fleet
 local maintenance_hook
 local parking_cleanup_token = 0
 local initialize_attempts = 0
+local crewmates_initialize_attempts = 0
+local crewmates_start_requested = false
+local crewmates_registered = false
 local parking_fleet_backup
 local parking_manual_control = false
 local parking_braking = false
@@ -757,8 +762,54 @@ local function bay_action_message(message)
    player.msg(message)
 end
 
+local function crewmates_ready()
+   return crewmates ~= nil and crewmates.is_ready()
+end
+
+local function launch_fallback_command_shuttle()
+   if not naev.claimTest(system.cur()) then
+      return false, _(
+         "Electromagnetic interference makes it unsafe to launch the command shuttle in this system.")
+   end
+   if naev.cache().joyride then
+      return false, _("another auxiliary ship is already active")
+   end
+
+   local carrier = player.pilot()
+   local default_hull = config.command_shuttle_for(
+      carrier:ship():nameRaw())
+   local saved = command_shuttle.ensure(
+      mem.nomad.command_shuttle, default_hull)
+   mem.nomad.command_shuttle = saved
+   local name = fmt.f(_("{name}'s Shuttle"), { name = player.ship() })
+   local template = pilot.add(saved.hull, "Trader", carrier:pos(), name,
+      { ai = "dummy" })
+   if not template then
+      return false, _("the command shuttle could not be created")
+   end
+   template:setVel(carrier:vel())
+   template:setDir(carrier:dir())
+   local acquired = fmt.f(
+      _("The command shuttle bay of your {mothership}."),
+      { mothership = player.ship() })
+   mem.nomad.command_shuttle_fallback_active = true
+   local controlled, reason = joyride.swap_to_subship(
+      carrier, template, acquired,
+      command_shuttle.profile(config.joyride_profile, saved))
+   if not controlled then
+      mem.nomad.command_shuttle_fallback_active = nil
+      if template:exists() then template:rm() end
+      return false, reason or _("the command shuttle could not launch")
+   end
+   return true
+end
+
 local function launch_command_shuttle()
-   return crewmates.launch_commander_shuttle(config.joyride_client)
+   if crewmates_registered and crewmates_ready() then
+      mem.nomad.command_shuttle_fallback_active = nil
+      return crewmates.launch_commander_shuttle(config.joyride_client)
+   end
+   return launch_fallback_command_shuttle()
 end
 
 local function reconcile_returned_joyride()
@@ -1163,7 +1214,9 @@ function nomad_wormhole_entering(payload)
       return
    end
    mem.nomad.wormhole_follow_origin = origin
-   if mothership_pilot and mothership_pilot:exists() then
+   if not mem.nomad.command_shuttle_fallback_active
+      and crewmates_registered and crewmates_ready()
+      and mothership_pilot and mothership_pilot:exists() then
       crewmates.release_mothership(config.joyride_client, mothership_pilot)
    end
    mothership_pilot = nil
@@ -2132,7 +2185,10 @@ function nomad_joyride_started(payload)
       for _, candidate in pairs(bay_pilots) do
          if candidate:exists() then candidate:setLeader(spawned) end
       end
-      crewmates.attach_mothership(config.joyride_client, spawned)
+      if not mem.nomad.command_shuttle_fallback_active
+         and crewmates_registered and crewmates_ready() then
+         crewmates.attach_mothership(config.joyride_client, spawned)
+      end
       hook.pilot(spawned, "hail", "nomad_hail_mothership")
       restore_bay_pilots()
    end
@@ -2165,6 +2221,10 @@ end
 
 function nomad_shuttle_returned(payload)
    if payload and payload.client == config.joyride_client then
+      if mem.nomad.command_shuttle_fallback_active then
+         mem.nomad.command_shuttle = command_shuttle.record(
+            mem.nomad.command_shuttle, payload)
+      end
       mem.nomad.active_kind = "owned"
       mem.nomad.virtual_name = nil
       hook.safe("nomad_delayed_audit", false)
@@ -2191,6 +2251,12 @@ end
 function nomad_joyride_ended(payload)
    runtime.joyride_ended(mem.nomad, payload)
    if not payload or payload.client ~= config.joyride_client then return end
+   local fallback_command = mem.nomad.command_shuttle_fallback_active == true
+   if fallback_command and payload.returned_kind == "virtual" then
+      mem.nomad.command_shuttle = command_shuttle.record(
+         mem.nomad.command_shuttle, payload)
+   end
+   mem.nomad.command_shuttle_fallback_active = nil
    landed_mothership_paused = false
    mem.nomad.wormhole_follow_origin = nil
    close_wormhole_pair(true)
@@ -2229,7 +2295,10 @@ function nomad_joyride_ended(payload)
    mem.nomad.virtual_name = nil
    mothership_pilot = nil
    sortie_bays = nil
-   crewmates.release_mothership(config.joyride_client)
+   if not fallback_command and crewmates_registered
+      and crewmates_ready() then
+      crewmates.release_mothership(config.joyride_client)
+   end
    local restore_in_space = is_carrier(player.ship()) and not player.isLanded()
    if restore_in_space then
       for _, candidate in pairs(bay_pilots) do
@@ -2314,20 +2383,34 @@ local function register_hooks()
    hooks_installed = true
 end
 
-function nomad_initialize()
-   -- Load events run while Naev is still restoring the landed spob. Crewmates
-   -- may need that spob when it creates the required commander, so this work
-   -- is deliberately deferred to a safe hook after the load transition.
-   if not crewmates.is_ready() then
-      initialize_attempts = initialize_attempts + 1
-      if initialize_attempts <= 240 then
-         hook.timer(initialize_attempts < 20 and 0.1 or 0.5,
-            "nomad_initialize")
-      else
-         player.msg(_("Nomad initialization stopped because Crewmates did not become ready."))
+function nomad_initialize_crewmates()
+   if not crewmates or crewmates_registered then return end
+   if not crewmates_start_requested then
+      crewmates_start_requested = true
+      naev.eventStart(config.crewmates_event)
+   end
+   if not crewmates_ready()
+      or (player.isLanded() and not spob.cur()) then
+      crewmates_initialize_attempts = crewmates_initialize_attempts + 1
+      if crewmates_initialize_attempts <= 240 then
+         hook.timer(crewmates_initialize_attempts < 20 and 0.1 or 0.5,
+            "nomad_initialize_crewmates")
       end
       return
    end
+   crewmates_initialize_attempts = 0
+   crewmates_registered = crewmates.ensure_commander(
+      config.joyride_client, {
+         minimum = config.minimum_crew.commander,
+         shuttle = config.command_shuttle_for(
+            player.pilot():ship():nameRaw()),
+         shuttle_profile = profile(),
+      }) ~= nil
+end
+
+function nomad_initialize()
+   -- Load events run while Naev is still restoring the landed spob. Defer
+   -- engine-facing initialization until that transition has completed.
    if player.isLanded() and not spob.cur() then
       initialize_attempts = initialize_attempts + 1
       if initialize_attempts <= 240 then
@@ -2346,12 +2429,6 @@ function nomad_initialize()
          returned_kind = "virtual",
       })
    end
-   assert(crewmates.ensure_commander(config.joyride_client, {
-      minimum = config.minimum_crew.commander,
-      shuttle = config.command_shuttle_for(
-         player.pilot():ship():nameRaw()),
-      shuttle_profile = profile(),
-   }), "Nomad requires an available commander")
    player.fleetCapacitySet(config.fleet_capacity)
    forget_parked_spob()
    mem.nomad.wormhole_follow_origin = nil
@@ -2362,6 +2439,7 @@ function nomad_initialize()
    owned_additions(true)
    register_actions()
    apply_rules(false)
+   nomad_initialize_crewmates()
 end
 
 function nomad_defer_initialize()

@@ -117,7 +117,11 @@ assert(#usage == 4 and usage[1].ship.name == "XL"
    and usage[2].ship.name == "M",
    "bay usage must be reportable without persisting assignments")
 
-local arx = config.starter_carriers[2]
+local arx
+for _, starter in ipairs(config.starter_carriers) do
+   if starter.hull == "Soromid Arx" then arx = starter end
+end
+assert(arx, "the Arx start must remain available")
 assert(arx.bays[1] == "Large Ship Bay" and arx.bays[2] == "Large Ship Bay"
    and arx.bays[3] == "Medium Ship Bay"
    and arx.roster[1].hull == "Soromid Copia",
@@ -132,6 +136,18 @@ end
 assignments, violations = policy.audit({ bays = arx_bays }, arx.roster)
 assert(#assignments == #arx.roster and #violations == 0,
    "every ship granted by the Arx start must fit its installed bay controls")
+
+local vox = config.optional_starter_carriers[1]
+local vox_bays = {}
+for _, outfit_name in ipairs(vox.bays) do
+   vox_bays[#vox_bays + 1] = {
+      name = config.general_bays[outfit_name].name,
+      max_size = config.general_bays[outfit_name].max_size,
+   }
+end
+assignments, violations = policy.audit({ bays = vox_bays }, vox.roster)
+assert(#assignments == 2 and #violations == 0,
+   "the optional Vox roster must fit exactly two large launch bays")
 
 local systems = retrofit.allocate({
    { id = 1, type = "Utility", size = "Medium" },

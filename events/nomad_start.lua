@@ -6,6 +6,7 @@
 --]]
 
 local config = require "nomad.config"
+local optional_variants = require "nomad.optional_variants"
 
 local utility_size = { Small = 1, Medium = 2, Large = 3 }
 
@@ -94,9 +95,12 @@ function create()
    naev.cache().joyride = nil
    naev.cache().player_mothership = nil
 
+   local starters = config.available_starter_carriers(
+      optional_variants.has_ship(
+         config.optional_starter_carriers[1].hull))
    local choices = {}
-   for index = 1, #config.starter_carriers do
-      local starter = config.starter_carriers[index]
+   for index = 1, #starters do
+      local starter = starters[index]
       choices[#choices + 1] = _(starter.choice)
    end
    local choice = tk.choice(
@@ -104,8 +108,7 @@ function create()
       _("Choose the hull that will become your first home among the stars."),
       (table.unpack or unpack)(choices)
    )
-   local starter = config.starter_carriers[choice]
-      or config.starter_carriers[1]
+   local starter = starters[choice] or starters[1]
 
    -- This pilot variable is the campaign boundary. The persistent Nomad event
    -- checks it before loading, leaving pilots created by other scenarios inert.
@@ -159,13 +162,9 @@ function create()
    var.push("tut_disable", true)
    var.push(config.start_chapter_var, starter.chapter or "0")
    naev.eventStart("start_event")
-   -- New-player creation does not start ordinary load events. Start the
-   -- current pilot's Crewmates event explicitly before Nomad so the public API
-   -- cannot resolve a stale provider left in naev.cache() by another pilot.
-   naev.eventStart(config.crewmates_event)
-   -- Establish the required commander before the first save. Waiting for the
-   -- handler's load condition would leave the initial pilot without a
-   -- persistent Crewmates roster until the save was loaded again.
+   -- New-player creation does not start ordinary load events. Nomad's
+   -- persistent handler starts its optional integrations after it has probed
+   -- which plugin modules are available for this pilot.
    naev.eventStart(config.handler_event)
    evt.finish(true)
 end

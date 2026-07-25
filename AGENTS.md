@@ -32,9 +32,14 @@ or object validity across hooks, transitions, landing, takeoff, swapping,
 loading, or universe diffs; verify the relevant Naev implementation and make
 each transition explicit.
 
-Nomad directly depends on `TXCrewmates`; Joyride is transitive. Use Joyride's
-public API and custom lifecycle events rather than copying its ship-swap logic.
-Use the client ID `nomad` so Crewmates can distinguish Nomad launches.
+Nomad directly depends on Joyride from Auxiliary Ship Bay. `TXCrewmates` is
+optional: probe its public API once during event startup and never from a hot
+path. Use Joyride's public API and custom lifecycle events rather than copying
+its ship-swap logic. Use the client ID `nomad` so Crewmates can distinguish
+Nomad launches when its provider is ready.
+
+Gate optional content starts with quiet engine capability checks such as
+`ship.exists`; do not make their source plugins hard dependencies.
 
 ## Testing and Changes
 

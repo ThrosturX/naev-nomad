@@ -2,10 +2,10 @@ identifier = "nomad"
 name = "Nomad Fleet"
 author = "ThrosturX"
 license = "AGPLv3"
-version = "0.2.2"
+version = "0.3.0"
 abstract = "Turns a carrier and its bays into the player's mobile home and fleet."
 description = "A carrier-based campaign where new Nomad pilots begin aboard a non-landing mothership and every owned subship must fit in its bays."
 release_status = "development"
 tags = [ "casual", "ships" ]
 naev_version = ">= 0.13.0"
-depends = [ "TXCrewmates" ]
+depends = [ "joyride" ]

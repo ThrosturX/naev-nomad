@@ -10,13 +10,19 @@ local function read_file(path)
 end
 
 local scenario = read_file("start.toml")
-assert(scenario:match('ship_model%s*=%s*"([^"]+)"') == config.bootstrap.hull
+assert(scenario:match('scenario_name%s*=%s*"([^"]+)"')
+      == "Sea of Isolation"
+   and scenario:match('ship_model%s*=%s*"([^"]+)"') == config.bootstrap.hull
    and scenario:match('event%s*=%s*"([^"]+)"') == "Nomad Start",
-   "the scenario must use its bootstrap hull and Nomad initializer")
+   "the scenario title, bootstrap hull, and initializer must remain explicit")
 
-local mule = config.starter_carriers[1]
-local arx = config.starter_carriers[2]
-local rhino = config.starter_carriers[3]
+local starters = {}
+for _, starter in ipairs(config.starter_carriers) do
+   starters[starter.hull] = starter
+end
+local mule = starters.Mule
+local arx = starters["Soromid Arx"]
+local rhino = starters["Pirate Rhino"]
 assert(mule.hull == "Mule" and arx.hull == "Soromid Arx"
    and rhino.hull == "Pirate Rhino" and #config.starter_carriers == 3,
    "all requested carrier starts must remain available")
@@ -38,6 +44,25 @@ assert(rhino.credits == 750000 and rhino.start_system == "Qorel"
    and #rhino.bays == 2 and rhino.bays[1] == "Medium Ship Bay"
    and rhino.bays[2] == "Medium Ship Bay",
    "the Rhino start must retain its Raven Clan pirate setup")
+
+local vox = config.optional_starter_carriers[1]
+assert(#config.optional_starter_carriers == 1
+   and vox.hull == "Soromid Vox Carrier"
+   and vox.choice == "Mutated Vox carrier"
+   and vox.command_shuttle == "Soromid Brigand"
+   and #vox.bays == 2
+   and vox.bays[1] == "Large Ship Bay"
+   and vox.bays[2] == "Large Ship Bay"
+   and #vox.roster == 2
+   and vox.roster[1].hull == "Soromid Odium"
+   and vox.roster[1].size == 3
+   and vox.roster[2].hull == "Soromid Marauder"
+   and vox.roster[2].size == 2,
+   "the optional Vox start must carry two complementary non-capital craft")
+assert(#config.available_starter_carriers(false) == 3
+   and #config.available_starter_carriers(true) == 4
+   and config.command_shuttle_for(vox.hull) == "Soromid Brigand",
+   "variant availability must only append the compatible Vox start")
 
 local parked = read_file("spob/nomad_parked_carrier.xml")
 assert(parked:find("<land/>", 1, true)
